@@ -4,11 +4,13 @@
 import { api } from 'sdk';
 import { baleCall, classifyError, isSystemError, safeErrorText } from '../lib/bale.js';
 import { deliver, isSupported } from '../lib/forward.js';
-import { createCode, getOrCreateCode, deletePendingCodes } from '../lib/linking.js';
+import {
+  createCode, getOrCreateCode, deletePendingCodes, hasPendingCode, pollBale, notifyLinked,
+} from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
 import {
-  touchUser, clearLink, claimMessage, maybeCleanup, countDelivery, isOwner,
+  touchUser, getUser, clearLink, claimMessage, maybeCleanup, countDelivery, isOwner,
   recordBaleSuccess, recordBaleFailure,
 } from '../lib/store.js';
 import { T, linkInstructions, statusText, baleStartLink, VERIFY_BUTTON, OPEN_BALE_BUTTON } from '../lib/texts.js';
@@ -156,13 +158,26 @@ export default async function (message, ctx) {
     if (!(await claimMessage(chatId, message.message_id))) return; // redelivery
     await maybeCleanup();
 
-    const user = await touchUser(tgId);
+    let user = await touchUser(tgId);
     if (user.blocked && !isOwner(tgId)) {
       await reply(chatId, T.blocked);
       return;
     }
 
     const cmd = parseCommand(message.text);
+
+    // An unlinked user with a pending code may already have sent it in Bale:
+    // check Bale first, so they don't depend on the verify button alone.
+    if (!user.baleChatId && (!cmd || cmd.name !== 'link') && (await hasPendingCode(tgId))) {
+      const result = await pollBale();
+      await notifyLinked(result.linkedNow, tgId);
+      if (result.linkedNow.has(tgId)) {
+        await reply(chatId, T.verifySuccess);
+        user = await getUser(tgId);
+        if (cmd && (cmd.name === 'start' || cmd.name === 'status')) return;
+      }
+    }
+
     if (cmd && (await handleCommand(cmd, chatId, tgId, user))) return;
 
     if (!user.baleChatId) {

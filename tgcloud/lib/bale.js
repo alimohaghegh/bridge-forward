@@ -66,6 +66,11 @@ export async function baleCall(method, params, files) {
   return r;
 }
 
+// A single attempt, no retries — for callers that manage their own.
+export async function baleCallOnce(method, params, files) {
+  return rawCall(method, params, files);
+}
+
 // Sorts a failed call into a reason the bot can explain.
 export function classifyError(r) {
   if (r.ok) return null;

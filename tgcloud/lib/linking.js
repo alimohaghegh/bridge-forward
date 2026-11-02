@@ -7,7 +7,7 @@
 import { db, api } from 'sdk';
 import { and, eq, gt, isNull, desc, sql } from 'sdk/db';
 import { linkCodes } from '../schema.js';
-import { baleCall, classifyError, isSystemError } from './bale.js';
+import { baleCall, baleCallOnce, classifyError, isSystemError } from './bale.js';
 import {
   acquirePollLock, releasePollLock, getBaleState, saveOffset, setLink,
   recordBaleSuccess, recordBaleFailure,
@@ -19,10 +19,13 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
 const CODE_LENGTH = 8;
 const CODE_TTL_SECONDS = 10 * 60;
 const REUSE_MIN_SECONDS_LEFT = 3 * 60;
-const POLL_LOCK_SECONDS = 25;
+const POLL_LOCK_SECONDS = 30;
 const MAX_POLL_PAGES = 3;
-// A handler run is capped near 30 s; stop handling Bale updates well before.
-const POLL_BUDGET_MS = 15000;
+// A handler run is capped near 30 s. Connecting to Bale from the platform is
+// flaky (a failed attempt costs ~5 s), so the first getUpdates gets attempts
+// until FETCH_RETRY_MS has passed, and update handling stops at POLL_BUDGET_MS.
+const FETCH_RETRY_MS = 11000;
+const POLL_BUDGET_MS = 22000;
 
 function randomCode() {
   const bytes = new Uint8Array(CODE_LENGTH);
@@ -126,14 +129,19 @@ async function handleBaleMessage(msg, linkedNow) {
 // { status: 'ok' | 'busy' | 'error', linkedNow: Set<tgId>, reason? }.
 export async function pollBale() {
   const linkedNow = new Set();
-  const deadline = Date.now() + POLL_BUDGET_MS;
+  const started = Date.now();
+  const deadline = started + POLL_BUDGET_MS;
   if (!(await acquirePollLock(POLL_LOCK_SECONDS))) return { status: 'busy', linkedNow };
   try {
     const state = await getBaleState();
     let offset = Number(state.updateOffset) || 0;
 
     for (let page = 0; page < MAX_POLL_PAGES; page++) {
-      const r = await baleCall('getUpdates', { offset, limit: 100, timeout: 0 });
+      const params = { offset, limit: 100, timeout: 0 };
+      let r = await baleCallOnce('getUpdates', params);
+      while (!r.ok && r.network && Date.now() - started < FETCH_RETRY_MS) {
+        r = await baleCallOnce('getUpdates', params);
+      }
       if (!r.ok) {
         const reason = classifyError(r);
         if (isSystemError(reason)) await recordBaleFailure('getUpdates/' + reason);
