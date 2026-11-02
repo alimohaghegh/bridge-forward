@@ -26,6 +26,7 @@ const MAX_POLL_PAGES = 3;
 // until FETCH_RETRY_MS has passed, and update handling stops at POLL_BUDGET_MS.
 const FETCH_RETRY_MS = 11000;
 const POLL_BUDGET_MS = 22000;
+const STALE_SECONDS = 15 * 60;
 
 function randomCode() {
   const bytes = new Uint8Array(CODE_LENGTH);
@@ -106,6 +107,9 @@ async function handleBaleMessage(msg, linkedNow) {
   const chatId = msg.chat.id;
   const text = typeof msg.text === 'string' ? msg.text : '';
   const code = extractCode(text);
+  // Old messages (left in Bale's queue while nobody checked) get no replies:
+  // their codes have expired anyway and a burst of late answers confuses.
+  const stale = typeof msg.date === 'number' && now() - msg.date > STALE_SECONDS;
 
   if (code) {
     const tgId = await consumeCode(code);
@@ -115,14 +119,14 @@ async function handleBaleMessage(msg, linkedNow) {
       await baleReply(chatId, T.baleLinked);
       return;
     }
-    await baleReply(chatId, T.baleBadCode);
+    if (!stale) await baleReply(chatId, T.baleBadCode);
     return;
   }
 
   // Not a code. Hint only chats that aren't linked yet, so linked users who
   // chat with the Bale bot don't get late, confusing replies.
   const linked = await db.get(sql`SELECT 1 AS x FROM users WHERE bale_chat_id = ${chatId} LIMIT 1`);
-  if (!linked) await baleReply(chatId, T.baleHint);
+  if (!linked && !stale) await baleReply(chatId, T.baleHint);
 }
 
 // Processes every pending Bale update. Returns
