@@ -21,6 +21,8 @@ const CODE_TTL_SECONDS = 10 * 60;
 const REUSE_MIN_SECONDS_LEFT = 3 * 60;
 const POLL_LOCK_SECONDS = 25;
 const MAX_POLL_PAGES = 3;
+// A handler run is capped near 30 s; stop handling Bale updates well before.
+const POLL_BUDGET_MS = 15000;
 
 function randomCode() {
   const bytes = new Uint8Array(CODE_LENGTH);
@@ -124,6 +126,7 @@ async function handleBaleMessage(msg, linkedNow) {
 // { status: 'ok' | 'busy' | 'error', linkedNow: Set<tgId>, reason? }.
 export async function pollBale() {
   const linkedNow = new Set();
+  const deadline = Date.now() + POLL_BUDGET_MS;
   if (!(await acquirePollLock(POLL_LOCK_SECONDS))) return { status: 'busy', linkedNow };
   try {
     const state = await getBaleState();
@@ -141,16 +144,21 @@ export async function pollBale() {
       if (!updates.length) break;
 
       for (const u of updates) {
-        if (typeof u.update_id === 'number' && u.update_id + 1 > offset) offset = u.update_id + 1;
+        // Leave the rest for the next press rather than being cut off.
+        if (Date.now() > deadline) return { status: 'ok', linkedNow };
+        // Advance before handling (at most once): if the run is cut off, an
+        // update is skipped rather than answered twice. Bale keeps resending
+        // unconfirmed updates otherwise.
+        if (typeof u.update_id === 'number' && u.update_id + 1 > offset) {
+          offset = u.update_id + 1;
+          await saveOffset(offset);
+        }
         try {
           await handleBaleMessage(u.message, linkedNow);
         } catch (e) {
           console.error('bale update failed', u.update_id, e && e.name);
         }
       }
-      // Always advance, even when single updates failed: Bale keeps resending
-      // unconfirmed updates otherwise.
-      await saveOffset(offset);
       if (updates.length < 100) break;
     }
     return { status: 'ok', linkedNow };
