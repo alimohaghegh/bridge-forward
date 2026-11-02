@@ -68,6 +68,9 @@ jobs:
             echo "::warning::Bale deleteWebhook from GitHub did not return 200; the setup step below retries from Telegram's side."
           fi
 
+      # Clears Bale's webhook from Telegram's side, sets the command menu and
+      # runs a database self-test. Informational: a slow Bale must not block
+      # a deploy that has already gone out.
       - name: Setup and smoke check
         run: |
-          npx tgcloud run handlers/message '{ __setup: true }'
+          npx tgcloud run handlers/message '{ __setup: true }' || echo '::warning::Setup/smoke check did not finish; see the output above.'

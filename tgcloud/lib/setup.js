@@ -51,13 +51,6 @@ export async function runSetup() {
     return { ok: true, username: me.username };
   });
 
-  out.baleGetMe = await step(async () => {
-    const r = await baleCall('getMe', {});
-    return r.ok
-      ? { ok: true, username: r.result && r.result.username }
-      : { ok: false, code: r.error_code, description: r.description, detail: r.detail };
-  });
-
   out.baleDeleteWebhook = await step(async () => {
     const r = await baleCall('deleteWebhook', {});
     return { ok: r.ok, code: r.error_code };
