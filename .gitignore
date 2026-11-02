@@ -1,0 +1,8 @@
+node_modules/
+.tgcloud/
+# Generated at deploy time from GitHub secrets — never commit.
+tgcloud/lib/config.js
+.env
+.env.*
+*.local
+.DS_Store

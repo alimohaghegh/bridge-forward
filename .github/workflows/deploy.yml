@@ -1,0 +1,68 @@
+name: Deploy bot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-bridge-forward
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write config from secrets
+        env:
+          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+          OWNER_TELEGRAM_ID: ${{ secrets.OWNER_TELEGRAM_ID }}
+        run: node scripts/write-config.mjs
+
+      # CI has no local .tgcloud state: fetch the cloud snapshot first so the
+      # push is a normal, conditional deploy.
+      - name: Fetch cloud state
+        run: npx tgcloud fetch
+
+      - name: Push modules
+        run: |
+          if ! npx tgcloud push; then
+            echo "::warning::Normal push was rejected; retrying with --force (single deployer)."
+            npx tgcloud push --force
+          fi
+
+      - name: Migrate database (safe changes only)
+        run: npx tgcloud migrate --safe
+
+      - name: Sync Telegram webhook
+        run: npx tgcloud webhook sync
+
+      - name: Remove Bale webhook (getUpdates needs it off)
+        env:
+          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            "https://tapi.bale.ai/bot${BALE_BOT_TOKEN}/deleteWebhook" 2>/dev/null) || code="network-error"
+          echo "Bale deleteWebhook HTTP status: $code"
+          if [ "$code" != "200" ]; then
+            echo "::warning::Bale deleteWebhook from GitHub did not return 200; the setup step below retries from Telegram's side."
+          fi
+
+      - name: Setup and smoke check
+        run: npx tgcloud run handlers/message '{ __setup: true }'
