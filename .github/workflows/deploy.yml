@@ -50,8 +50,12 @@ jobs:
       - name: Migrate database (safe changes only)
         run: npx tgcloud migrate --safe
 
+      # push already refreshes the webhook; with a CI token this call may be
+      # refused (Unauthorized), so it is best-effort.
       - name: Sync Telegram webhook
-        run: npx tgcloud webhook sync
+        run: |
+          npx tgcloud webhook sync || echo "::warning::webhook sync was refused; push already refreshed the webhook."
+          npx tgcloud webhook || true
 
       - name: Remove Bale webhook (getUpdates needs it off)
         env:

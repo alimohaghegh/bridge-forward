@@ -71,7 +71,7 @@ export async function maybeCleanup() {
   if (Math.random() > 0.05) return;
   const t = now();
   await db.run(sql`DELETE FROM delivered WHERE created_at < ${t - DELIVERED_RETENTION_SECONDS}`);
-  await db.run(sql`DELETE FROM link_codes WHERE expires_at < ${t - CODE_RETENTION_SECONDS}`);
+  await db.run(sql`DELETE FROM codes WHERE expires_at < ${t - CODE_RETENTION_SECONDS}`);
 }
 
 // ── Bale state (single row, id = 1) ─────────────────────────────────────────

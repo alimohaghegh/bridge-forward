@@ -19,15 +19,16 @@ export const users = table('users', {
 }));
 
 // Single-use linking codes. A code is consumed by setting used_at.
-export const linkCodes = table('link_codes', {
+// (Named `codes`: an older, incompatible `link_codes` table exists in the DB.)
+export const linkCodes = table('codes', {
   code:      text('code').primaryKey(),
   tgId:      integer('tg_id').notNull(),
   createdAt: integer('created_at').notNull().default(sql`(unixepoch())`),
   expiresAt: integer('expires_at').notNull(),
   usedAt:    integer('used_at'),
 }, (t) => ({
-  tgIdx:      index('idx_link_codes_tg').on(t.tgId),
-  expiresIdx: index('idx_link_codes_expires').on(t.expiresAt),
+  tgIdx:      index('idx_codes_tg').on(t.tgId),
+  expiresIdx: index('idx_codes_expires').on(t.expiresAt),
 }));
 
 // A single row (id = 1): Bale getUpdates offset, a short poll lock, and the

@@ -79,9 +79,25 @@ export async function runSetup() {
     return { ok: true, users: u.c, stateRows: s.c };
   });
 
+  out.importOldLinks = await step(importOldLinks);
   out.selfTest = await step(selfTest);
 
   return out;
+}
+
+// Carries links made by the previous version of the bot (table `links`) over
+// to `users`. Idempotent: users who already have a row are left alone.
+async function importOldLinks() {
+  const exists = await db.get(sql`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'links'`);
+  if (!exists) return { ok: true, imported: 0 };
+  const r = await db.run(sql`
+    INSERT OR IGNORE INTO users (tg_id, bale_chat_id, linked_at, created_at, last_seen_at)
+    SELECT tg_user_id, bale_chat_id, t, t, t FROM (
+      SELECT tg_user_id, bale_chat_id,
+             CASE WHEN linked_at > 100000000000 THEN linked_at / 1000 ELSE linked_at END AS t
+      FROM links WHERE bale_chat_id IS NOT NULL
+    )`);
+  return { ok: true, imported: r.rowsAffected };
 }
 
 // Exercises the database helpers with a fake user id (-1), then cleans up.
@@ -116,7 +132,7 @@ async function selfTest() {
     checks.pollLock = lock1 === true && lock2 === false;
   } finally {
     await db.run(sql`DELETE FROM users WHERE tg_id = ${fake}`);
-    await db.run(sql`DELETE FROM link_codes WHERE tg_id = ${fake}`);
+    await db.run(sql`DELETE FROM codes WHERE tg_id = ${fake}`);
     await db.run(sql`DELETE FROM delivered WHERE chat_id = ${fake}`);
   }
   return { ok: Object.values(checks).every(Boolean), checks };

@@ -83,7 +83,7 @@
 
 ```
 tgcloud/
-├─ schema.js               جدول‌ها: users, link_codes, bale_state, delivered
+├─ schema.js               جدول‌ها: users, codes, bale_state, delivered
 ├─ handlers/message.js     دستورها، اتصال و انتقال پیام
 ├─ handlers/callback_query.js  دکمهٔ «تأیید» — خواندن پیام‌های بله با getUpdates
 └─ lib/

@@ -17,7 +17,7 @@ async function stats() {
            coalesce(sum(delivered_count), 0) AS delivered,
            coalesce(sum(failed_count), 0) AS failed
     FROM users`);
-  const codes = await db.get(sql`SELECT count(*) AS c FROM link_codes WHERE used_at IS NULL AND expires_at > ${t}`);
+  const codes = await db.get(sql`SELECT count(*) AS c FROM codes WHERE used_at IS NULL AND expires_at > ${t}`);
   const state = await getBaleState();
   return [
     '📊 <b>آمار ربات</b>',

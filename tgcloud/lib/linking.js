@@ -41,7 +41,7 @@ export async function createCode(tgId) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = randomCode();
     const r = await db.run(
-      sql`INSERT OR IGNORE INTO link_codes (code, tg_id, created_at, expires_at) VALUES (${code}, ${tgId}, ${t}, ${t + CODE_TTL_SECONDS})`
+      sql`INSERT OR IGNORE INTO codes (code, tg_id, created_at, expires_at) VALUES (${code}, ${tgId}, ${t}, ${t + CODE_TTL_SECONDS})`
     );
     if (r.rowsAffected > 0) return { code, minutesLeft: CODE_TTL_SECONDS / 60 };
   }
@@ -86,7 +86,7 @@ export function extractCode(text) {
 export async function consumeCode(code) {
   const t = now();
   const r = await db.run(
-    sql`UPDATE link_codes SET used_at = ${t} WHERE code = ${code} AND used_at IS NULL AND expires_at > ${t} RETURNING tg_id`
+    sql`UPDATE codes SET used_at = ${t} WHERE code = ${code} AND used_at IS NULL AND expires_at > ${t} RETURNING tg_id`
   );
   const row = rowsOf(r)[0];
   return row ? Number(row.tg_id) : null;
