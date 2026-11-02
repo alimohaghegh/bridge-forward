@@ -1,6 +1,6 @@
 // Deploy-time setup and smoke check, run from CI with
 //   npx tgcloud run handlers/message '{ __setup: true }'
-// It clears Bale's webhook (getUpdates needs that), registers the Telegram
+// It checks Bale's webhook is off (CI clears it with curl), registers the Telegram
 // command menu and reports what works. The result contains no secrets.
 
 import { api, db } from 'sdk';
@@ -51,11 +51,6 @@ export async function runSetup() {
     return { ok: true, username: me.username };
   });
 
-  out.baleDeleteWebhook = await step(async () => {
-    const r = await baleCall('deleteWebhook', {});
-    return { ok: r.ok, code: r.error_code };
-  });
-
   out.baleWebhookInfo = await step(async () => {
     const r = await baleCall('getWebhookInfo', {});
     return r.ok ? { ok: true, urlEmpty: !(r.result && r.result.url) } : { ok: false, code: r.error_code };
@@ -68,10 +63,36 @@ export async function runSetup() {
     return { ok: true };
   });
 
+  // Counts only — no ids or contents.
   out.database = await step(async () => {
-    const u = await db.get(sql`SELECT count(*) AS c FROM users`);
-    const s = await db.get(sql`SELECT count(*) AS c FROM bale_state`);
-    return { ok: true, users: u.c, stateRows: s.c };
+    const t = Math.floor(Date.now() / 1000);
+    const u = await db.get(sql`
+      SELECT count(*) AS users,
+             sum(CASE WHEN bale_chat_id IS NOT NULL THEN 1 ELSE 0 END) AS linked
+      FROM users`);
+    const c = await db.get(sql`
+      SELECT sum(CASE WHEN used_at IS NULL AND expires_at > ${t} THEN 1 ELSE 0 END) AS pending,
+             sum(CASE WHEN used_at IS NULL AND expires_at <= ${t} THEN 1 ELSE 0 END) AS expired,
+             sum(CASE WHEN used_at IS NOT NULL THEN 1 ELSE 0 END) AS used
+      FROM codes`);
+    const s = await db.get(sql`SELECT update_offset, lock_until, consecutive_failures FROM bale_state WHERE id = 1`);
+    return {
+      ok: true,
+      users: u.users, linked: u.linked || 0,
+      codes: { pending: c.pending || 0, expired: c.expired || 0, used: c.used || 0 },
+      baleOffset: s && s.update_offset,
+      lockHeld: Boolean(s && s.lock_until > t),
+      baleFailuresInRow: s && s.consecutive_failures,
+    };
+  });
+
+  // Peek at Bale's queue without confirming anything (same offset).
+  out.balePending = await step(async () => {
+    const s = await db.get(sql`SELECT update_offset FROM bale_state WHERE id = 1`);
+    const r = await baleCall('getUpdates', { offset: (s && s.update_offset) || 0, limit: 100, timeout: 0 });
+    if (!r.ok) return { ok: false, code: r.error_code };
+    const list = Array.isArray(r.result) ? r.result : [];
+    return { ok: true, count: list.length, withText: list.filter((x) => x.message && x.message.text).length };
   });
 
   out.importOldLinks = await step(importOldLinks);
