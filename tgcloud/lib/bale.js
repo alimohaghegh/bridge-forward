@@ -27,8 +27,9 @@ async function rawCall(method, params, files) {
   try {
     res = await fetch(url, { method: 'POST', body });
   } catch (e) {
-    console.warn('bale: network error on', method);
-    return { ok: false, error_code: 0, description: 'network error', network: true };
+    const detail = safeErrorText(e);
+    console.warn('bale: network error on', method, detail);
+    return { ok: false, error_code: 0, description: 'network error', network: true, detail };
   }
 
   let data = null;

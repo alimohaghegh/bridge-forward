@@ -3,9 +3,9 @@
 // It clears Bale's webhook (getUpdates needs that), registers the Telegram
 // command menu and reports what works. The result contains no secrets.
 
-import { api, db } from 'sdk';
+import { api, db, fetch } from 'sdk';
 import { sql } from 'sdk/db';
-import { baleCall } from './bale.js';
+import { baleCall, safeErrorText } from './bale.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { createCode, getOrCreateCode, extractCode, consumeCode } from './linking.js';
 import {
@@ -34,7 +34,7 @@ async function step(fn) {
   try {
     return await fn();
   } catch (e) {
-    return { ok: false, error: (e && (e.description || e.name)) || 'error' };
+    return { ok: false, error: safeErrorText(e), code: e && e.code };
   }
 }
 
@@ -46,6 +46,16 @@ export async function runSetup() {
     },
   };
 
+  out.fetchProbe = {};
+  for (const url of ['https://tapi.bale.ai/', 'https://ble.ir/', 'https://api.github.com/', 'https://core.telegram.org/']) {
+    const started = Date.now();
+    out.fetchProbe[url] = await step(async () => {
+      const res = await fetch(url, { method: 'GET' });
+      return { ok: true, status: res.status, ms: Date.now() - started };
+    });
+    if (out.fetchProbe[url].ms === undefined) out.fetchProbe[url].ms = Date.now() - started;
+  }
+
   out.telegramBot = await step(async () => {
     const me = await api.getMe();
     return { ok: true, username: me.username };
@@ -53,7 +63,9 @@ export async function runSetup() {
 
   out.baleGetMe = await step(async () => {
     const r = await baleCall('getMe', {});
-    return r.ok ? { ok: true, username: r.result && r.result.username } : { ok: false, code: r.error_code, description: r.description };
+    return r.ok
+      ? { ok: true, username: r.result && r.result.username }
+      : { ok: false, code: r.error_code, description: r.description, detail: r.detail };
   });
 
   out.baleDeleteWebhook = await step(async () => {
