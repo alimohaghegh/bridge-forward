@@ -65,4 +65,5 @@ jobs:
           fi
 
       - name: Setup and smoke check
-        run: npx tgcloud run handlers/message '{ __setup: true }'
+        run: |
+          npx tgcloud run handlers/message '{ __setup: true }'
