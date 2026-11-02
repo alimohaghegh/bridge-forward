@@ -48,12 +48,17 @@ async function rawCall(method, params, files) {
 
 // Calls a Bale method. Returns the raw envelope ({ ok, result } or
 // { ok: false, error_code, description, parameters }); never throws.
-// A 429 is retried once after `retry_after`.
+// A network failure is retried once right away: from the platform, the first
+// connection to Bale sometimes times out while the next one succeeds.
+// A 429 is retried once after `retry_after`. The runtime has no timers, so
+// without one only short waits (≤ 2 s) are retried, relying on Bale's own
+// round-trip time as the pause.
 export async function baleCall(method, params, files) {
   let r = await rawCall(method, params, files);
+  if (!r.ok && r.network) r = await rawCall(method, params, files);
   if (!r.ok && r.error_code === 429) {
     const wait = Number(r.parameters && r.parameters.retry_after) || 1;
-    if (wait <= MAX_RETRY_WAIT_SECONDS && (await sleep(wait * 1000))) {
+    if (wait <= MAX_RETRY_WAIT_SECONDS && ((await sleep(wait * 1000)) || wait <= 2)) {
       r = await rawCall(method, params, files);
     }
   }

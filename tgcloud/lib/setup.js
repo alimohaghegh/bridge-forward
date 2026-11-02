@@ -3,7 +3,7 @@
 // It clears Bale's webhook (getUpdates needs that), registers the Telegram
 // command menu and reports what works. The result contains no secrets.
 
-import { api, db, fetch } from 'sdk';
+import { api, db } from 'sdk';
 import { sql } from 'sdk/db';
 import { baleCall, safeErrorText } from './bale.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
@@ -45,16 +45,6 @@ export async function runSetup() {
       cryptoRandom: typeof (globalThis.crypto && globalThis.crypto.getRandomValues),
     },
   };
-
-  out.fetchProbe = {};
-  for (const url of ['https://tapi.bale.ai/', 'https://ble.ir/', 'https://api.github.com/', 'https://core.telegram.org/']) {
-    const started = Date.now();
-    out.fetchProbe[url] = await step(async () => {
-      const res = await fetch(url, { method: 'GET' });
-      return { ok: true, status: res.status, ms: Date.now() - started };
-    });
-    if (out.fetchProbe[url].ms === undefined) out.fetchProbe[url].ms = Date.now() - started;
-  }
 
   out.telegramBot = await step(async () => {
     const me = await api.getMe();
