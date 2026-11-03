@@ -8,6 +8,7 @@ import { baleCall, baleCallOnce, safeErrorText } from './bale.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { getUser } from './store.js';
 import { getSetting } from './eitaa.js';
+import { rowsOf } from './util.js';
 import { enqueuePost, enqueueEdit, drain } from './mirror.js';
 import { saveChannel } from './channels.js';
 
@@ -163,6 +164,19 @@ export async function runBaleState() {
   // Channel posts the bot recorded (claimed) in the last 30 minutes.
   out.claimed30m = (await db.get(sql`
     SELECT count(*) AS n FROM delivered WHERE chat_id < 0 AND created_at > ${t - 30 * 60}`)).n;
+  // The last Bale calls as [seconds ago, method, via, ok, network, code, ms]
+  // (no ids), and leftover album state: to follow one album's path.
+  out.recent = rowsOf(await db.all(sql`
+    SELECT at_ms, method, via, ok, network, code, ms FROM bale_calls
+    WHERE at_ms > ${Date.now() - 60 * 60 * 1000} AND method != 'getUpdates' ORDER BY id DESC LIMIT 40`))
+    .map((c) => [Math.round((Date.now() - c.at_ms) / 1000), c.method, c.via, c.ok ? 1 : 0, c.network ? 1 : 0, c.code || 0, c.ms]);
+  out.albumState = await db.get(sql`
+    SELECT (SELECT count(*) FROM album_items WHERE chat_id < 0) AS items,
+           (SELECT count(*) FROM album_items WHERE chat_id < 0 AND taken = 1) AS taken,
+           (SELECT count(*) FROM albums WHERE key LIKE '-%' AND created_ms > ${Date.now() - 3600 * 1000}) AS albums1h`);
+  out.mirrored1h = rowsOf(await db.all(sql`
+    SELECT layout, count(*) AS n FROM mirrored WHERE created_at > ${t - 3600} GROUP BY layout`));
+  out.errors = (await getSetting('errors', [])).slice(0, 6).map((e) => [t - e.at, e.where, e.name, String(e.msg).slice(0, 60)]);
   out.now = t;
   return out;
 }
