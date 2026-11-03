@@ -71,5 +71,5 @@ jobs:
           done
           wait
           # Let the queue finish (like the per-minute retry run would).
-          for k in 1 2 3; do npx tgcloud run handlers/message '{ __drain: true }' > /dev/null 2>&1 || true; done
+          for k in 1 2 3; do sleep 10; npx tgcloud run handlers/message '{ __drain: true }' > /dev/null 2>&1 || true; done
           bash scripts/run-and-annotate.sh 'Report' '{ __burst_report: true }'
