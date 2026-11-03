@@ -262,6 +262,35 @@ const FMT2 = [
   [null, '9) **bold** __italic__ [link](https://eitaa.com) `code` *x* _x_ /x/'],
 ];
 
+// fmt3: is formatting misplaced after line breaks? Your test post, as the
+// bot renders it, sent with different line-break forms.
+const POST_LINES = ['*test*', '_test_', '/test/', 'link', 'normal', 'bold', 'italic', 'code'];
+function postHtml(nl, from) {
+  const lines = POST_LINES.slice(from || 0);
+  const wrap = { link: (t) => `<a href="https://eitaa.com">${t}</a>`, bold: (t) => `<b>${t}</b>`, italic: (t) => `<i>${t}</i>`, code: (t) => `<code>${t}</code>` };
+  return lines.map((l) => (wrap[l] ? wrap[l](l) : l)).join(nl);
+}
+const FMT3 = [
+  `1) x\n<b>bold</b>`,
+  `2) x\nx\nx\n<b>bold</b> <i>italic</i> <code>code</code>`,
+  `3) \n` + postHtml('\n'),
+  `4) <br>` + postHtml('<br>'),
+  `5) \r\n` + postHtml('\r\n'),
+  `6) \n` + postHtml('\n', 3),
+  `7) ` + postHtml(' '),
+];
+
+export async function runFmt3Diag() {
+  const m = await testMapping();
+  if (!m) return { ok: false, error: 'no test mapping' };
+  const out = [];
+  for (const text of FMT3) {
+    const r = await eitaaCallOnce(m.token, 'sendMessage', { chat_id: m.chat, title: 'tg-diag-fmt3', text, parse_mode: 'html' });
+    out.push(`${text.slice(0, 2)} ${r.ok ? 'ok' : describeFailure(r).slice(0, 80)}`);
+  }
+  return { ok: true, sent: out };
+}
+
 export async function runFmt2Diag() {
   const m = await testMapping();
   if (!m) return { ok: false, error: 'no test mapping' };
