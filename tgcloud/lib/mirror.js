@@ -140,22 +140,24 @@ async function runSend(link, job, payload, deadline) {
 
 // The last few Bale delete answers (time, code, short text; no content),
 // for diagnosis (__bale_state): a refusal used to pass for "already gone".
-async function noteDelete(r) {
+async function noteDelete(r, ids) {
   try {
     const list = await getSetting('bale_deletes', []);
     list.unshift({
-      at: now(), ok: r.ok === true, result: r.ok ? r.result : undefined, code: r.error_code,
+      at: now(), ...ids, ok: r.ok === true, result: r.ok ? r.result : undefined, code: r.error_code,
       desc: r.ok ? undefined : String(r.description || r.detail || '').slice(0, 80), via: r.via,
     });
-    await setSetting('bale_deletes', list.slice(0, 5));
+    await setSetting('bale_deletes', list.slice(0, 10));
   } catch {
     // Diagnosis only.
   }
 }
 
-async function deleteBale(chatId, baleId) {
+// `why`: delete (the Telegram post was deleted) | edit-part (an edit made the
+// text shorter) | edit-media (the file was replaced; the old copy goes).
+async function deleteBale(chatId, baleId, tgId, why) {
   const r = await baleCall('deleteMessage', { chat_id: chatId, message_id: baleId });
-  await noteDelete(r);
+  await noteDelete(r, { tg: tgId, bale: baleId, why });
   if (r.ok && r.result !== false) return { ok: true };
   // Already gone: nothing more to do.
   if (!r.ok && r.error_code === 400 && /not found|message_id_invalid/i.test(String(r.description))) return { ok: true };
@@ -181,7 +183,7 @@ async function syncTextParts(chatId, ids, chunks, row, layout) {
     }
   }
   while (ids.length > chunks.length) {
-    const r = await deleteBale(chatId, ids[ids.length - 1]);
+    const r = await deleteBale(chatId, ids[ids.length - 1], row.tg_message_id, 'edit-part');
     if (!r.ok) return r;
     ids.pop();
     await updateMirroredIds(row, row.prefix.concat(ids), layout);
@@ -212,7 +214,7 @@ async function runEdit(link, m, deadline) {
     if (!r.ok) return r;
     await saveMirrored(link.tgChannelId, m.message_id, chatId, plan.ids[m.message_id] || [], plan.layout[m.message_id], spec.fileUid);
     for (const id of row.ids) {
-      const d = await deleteBale(chatId, id);
+      const d = await deleteBale(chatId, id, m.message_id, 'edit-media');
       if (!d.ok) return failure(d);
     }
     return { ok: true };
@@ -240,7 +242,7 @@ async function runDelete(link, tgMessageId) {
   const row = await getMirrored(link.tgChannelId, tgMessageId);
   if (!row) return { ok: true };
   for (const id of row.ids) {
-    const r = await deleteBale(row.bale_chat_id, id);
+    const r = await deleteBale(row.bale_chat_id, id, tgMessageId, 'delete');
     if (!r.ok) return failure(r);
   }
   await db.run(sql`DELETE FROM mirrored WHERE tg_chat_id = ${link.tgChannelId} AND tg_message_id = ${tgMessageId}`);

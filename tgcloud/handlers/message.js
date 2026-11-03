@@ -21,7 +21,7 @@ import { clearPending, activePending, telegramChannelTitle } from '../lib/channe
 import { hasPendingCode, pollBale, notifyLinked } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
-import { runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState } from '../lib/diag.js';
+import { runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState, formatDeleteLog } from '../lib/diag.js';
 import {
   touchUser, getUser, claimMessage, maybeCleanup, countDelivery, isOwner, recordBaleSuccess, recordBaleFailure,
 } from '../lib/store.js';
@@ -107,6 +107,7 @@ async function handleCommand(cmd, chatId, tgId, user) {
   }
   if (cmd.name === 'bale_diag' || cmd.name === 'diag') {
     if (cmd.arg.toLowerCase() === 'fmt') await runBaleFmtDiag(chatId);
+    else if (cmd.arg.toLowerCase() === 'deletes') await reply(chatId, await formatDeleteLog());
     else await reply(chatId, formatProbe(await runBaleProbe(user.baleChatId, '🔧 آزمایش اتصال (از طرف مدیر ربات)')) + '\n\nقالب‌بندی: /bale_diag fmt');
     return true;
   }

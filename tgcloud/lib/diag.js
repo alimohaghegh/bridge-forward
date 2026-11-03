@@ -146,7 +146,18 @@ export async function runBaleState() {
       newestSeenAboveMirrored: Boolean(tracked.top && last[0] && tracked.top > last[0].tg_message_id),
     });
   }
-  out.lastDeletes = await getSetting('bale_deletes', []);
+  // Without ids here: CI logs are public (the owner sees them with /bale_diag deletes).
+  out.lastDeletes = (await getSetting('bale_deletes', [])).map(({ tg, bale, ...rest }) => rest);
   out.now = t;
   return out;
+}
+
+// Owner only (/bale_diag deletes): the last Bale delete answers with the
+// Telegram and Bale message ids, in Tehran time.
+export async function formatDeleteLog() {
+  const list = await getSetting('bale_deletes', []);
+  if (!list.length) return 'هنوز حذفی در بله انجام نشده است.';
+  const time = (t) => new Date((t + 3.5 * 3600) * 1000).toISOString().slice(11, 19);
+  return ['🗑 آخرین درخواست‌های حذف در بله (ساعت تهران):', ...list.map((d) =>
+    `${time(d.at)} · ${d.why || '?'} · تلگرام ${d.tg ?? '?'} → بله ${d.bale ?? '?'} · ${d.ok ? (d.result === false ? 'ok اما false' : 'انجام شد') : `خطا ${d.code} ${d.desc || ''}`} · ${d.via || ''}`)].join('\n');
 }
