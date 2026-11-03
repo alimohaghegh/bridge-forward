@@ -429,6 +429,16 @@ export async function gatewayProbe() {
 export async function runEitaaCiProbe() {
   const out = { at: now(), runtime: runtimeCaps(), simpleMode: simpleModeEnabled(), advancedMode: advancedModeEnabled() };
   out.site = await timedFetch('https://eitaayar.ir/');
+  // What else can (not) be reached, to tell a block on Eitaa from a
+  // general problem with Iranian hosts.
+  out.reach = {};
+  for (const url of [
+    'https://example.com/', 'https://tapi.bale.ai/', 'https://ble.ir/', 'https://eitaa.com/', 'https://web.eitaa.com/',
+    'https://www.aparat.com/', 'https://www.digikala.com/', 'https://2.189.58.58/', 'http://eitaayar.ir/', 'https://api.eitaayar.ir/',
+  ]) {
+    const r = await timedFetch(url);
+    out.reach[url] = r.ok ? `${r.status} ${r.ms}ms` : `fail ${r.ms}ms ${r.error}`;
+  }
   if (SHARED_TOKEN) {
     const r = await eitaaCall(SHARED_TOKEN, 'getMe', {});
     out.getMe = { ok: r.ok, ms: r.ms, http: r.http, error: r.ok ? undefined : describeFailure(r).slice(0, 100) };
