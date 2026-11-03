@@ -10,7 +10,7 @@ import {
   SHARED_TOKEN, RELAY_URL, relayEnabled, eitaaCallOnce, eitaaCall, channelToken, describeFailure, messageIdOf, redact,
   getSetting, updateCaps, eitaaCaps, webCryptoAvailable, simpleModeEnabled, advancedModeEnabled,
 } from './eitaa.js';
-import { channelRow, refetch, buildParts } from './eitaa_mirror.js';
+import { channelRow, refetch, buildParts, processQueue } from './eitaa_mirror.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { now, sleep } from './util.js';
 
@@ -484,6 +484,24 @@ export async function runEitaaRender() {
     parts: parts.map((p) => ({ type: p.type, html: p.html, shape: mask(p.text || (p.caption && p.caption.text)) })),
     issues: [...issues],
   };
+}
+
+// CI probe (__eitaa_resend): sends the owner's last mirrored post again
+// through the real mirror path (queue → re-read → send), to compare it with
+// the diagnostic messages in the same app.
+export async function runEitaaResend() {
+  const row = await db.get(sql`
+    SELECT p.tg_channel_id AS ch, p.tg_message_id AS id FROM eitaa_posts p
+    JOIN eitaa_channels c ON c.tg_channel_id = p.tg_channel_id
+    WHERE c.owner_tg_id = ${OWNER_TELEGRAM_ID} AND p.kind = 'post' AND p.status IN ('done', 'partial')
+    ORDER BY p.tg_message_id DESC LIMIT 1`);
+  if (!row) return { ok: false, error: 'no post' };
+  await db.run(sql`
+    UPDATE eitaa_posts SET status = 'queued', parts_done = 0, eitaa_ids = '[]', attempts = 0
+    WHERE tg_channel_id = ${row.ch} AND tg_message_id = ${row.id}`);
+  const status = await processQueue(Number(row.ch), { deadline: Date.now() + 10000, waitMs: 3000 });
+  const after = await db.get(sql`SELECT status, issues, last_error FROM eitaa_posts WHERE tg_channel_id = ${row.ch} AND tg_message_id = ${row.id}`);
+  return { ok: true, id: row.id, queue: status, after };
 }
 
 // CI probe (__eitaa_state): stored findings and the outcome of the owner's
