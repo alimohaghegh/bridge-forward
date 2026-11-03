@@ -60,11 +60,13 @@ export async function countDelivery(tgId, ok) {
 }
 
 // Claims a Telegram message for processing. False = already seen (redelivery).
+// Claims read the rows a statement returns, not rowsAffected (seen to be
+// wrong under concurrent runs; see mirror.js acquire).
 export async function claimMessage(chatId, messageId) {
   const r = await db.run(
-    sql`INSERT OR IGNORE INTO delivered (chat_id, message_id, created_at) VALUES (${chatId}, ${messageId}, ${now()})`
+    sql`INSERT OR IGNORE INTO delivered (chat_id, message_id, created_at) VALUES (${chatId}, ${messageId}, ${now()}) RETURNING message_id`
   );
-  return r.rowsAffected > 0;
+  return rowsOf(r).length > 0;
 }
 
 // Occasional cleanup of old dedupe rows and spent codes.
@@ -92,9 +94,9 @@ export async function acquirePollLock(seconds) {
   await ensureStateRow();
   const t = now();
   const r = await db.run(
-    sql`UPDATE bale_state SET lock_until = ${t + seconds} WHERE id = 1 AND lock_until < ${t}`
+    sql`UPDATE bale_state SET lock_until = ${t + seconds} WHERE id = 1 AND lock_until < ${t} RETURNING id`
   );
-  return r.rowsAffected > 0;
+  return rowsOf(r).length > 0;
 }
 
 export async function releasePollLock() {
@@ -121,9 +123,9 @@ export async function recordBaleFailure(reason) {
   if (!row || row.consecutive_failures < ALERT_AFTER_FAILURES) return;
   if (t - row.last_alert_at < ALERT_INTERVAL_SECONDS) return;
   const claimed = await db.run(
-    sql`UPDATE bale_state SET last_alert_at = ${t} WHERE id = 1 AND last_alert_at = ${row.last_alert_at}`
+    sql`UPDATE bale_state SET last_alert_at = ${t} WHERE id = 1 AND last_alert_at = ${row.last_alert_at} RETURNING id`
   );
-  if (claimed.rowsAffected === 0) return;
+  if (!rowsOf(claimed).length) return;
   try {
     await api.sendMessage({
       chat_id: OWNER_TELEGRAM_ID,

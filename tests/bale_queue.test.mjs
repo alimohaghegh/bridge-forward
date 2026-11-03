@@ -27,7 +27,14 @@ const build = (q) => {
 };
 db.get = async (q) => { const [t, p] = build(q); return sqlite.prepare(t).get(...p) || null; };
 db.all = async (q) => { const [t, p] = build(q); return sqlite.prepare(t).all(...p); };
-db.run = async (q) => { const [t, p] = build(q); const r = sqlite.prepare(t).run(...p); return { rowsAffected: Number(r.changes), rows: [] }; };
+// Like the platform: a statement with RETURNING gives its rows back.
+db.run = async (q) => {
+  const [t, p] = build(q);
+  const st = sqlite.prepare(t);
+  if (/\bRETURNING\b/i.test(t)) { const rows = st.all(...p); return { rowsAffected: rows.length, rows }; }
+  const r = st.run(...p);
+  return { rowsAffected: Number(r.changes), rows: [] };
+};
 
 const { enqueuePost } = await import('../tgcloud/lib/mirror.js');
 const post = (id) => ({ message_id: id, chat: { id: -100, type: 'channel' }, text: 'تست' });

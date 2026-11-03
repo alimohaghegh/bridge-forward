@@ -391,14 +391,22 @@ async function refetch(ch, tgMessageId) {
 
 // ── Queue ───────────────────────────────────────────────────────────────────
 
-async function acquire(tgChannelId, waitMs) {
+// The lock names its holder: success is read from the row the UPDATE
+// returns (rowsAffected was seen to be wrong under concurrent runs), and
+// release only frees a lock this run still holds.
+function newToken() {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
+async function acquire(tgChannelId, waitMs, token) {
   const until = Date.now() + waitMs;
   for (;;) {
     const t = now();
-    const r = await db.run(sql`
-      UPDATE eitaa_channels SET lock_until = ${t + LOCK_SECONDS}
-      WHERE tg_channel_id = ${tgChannelId} AND lock_until < ${t}`);
-    if (r.rowsAffected > 0) return true;
+    const rows = rowsOf(await db.run(sql`
+      UPDATE eitaa_channels SET lock_until = ${t + LOCK_SECONDS}, lock_owner = ${token}
+      WHERE tg_channel_id = ${tgChannelId} AND lock_until < ${t}
+      RETURNING lock_owner`));
+    if (rows.length && rows[0].lock_owner === token) return true;
     if (Date.now() >= until) return false;
     // No timers on the platform: wait by reading until the lock is free.
     while (Date.now() < until) {
@@ -409,8 +417,25 @@ async function acquire(tgChannelId, waitMs) {
   }
 }
 
-async function release(tgChannelId) {
-  await db.run(sql`UPDATE eitaa_channels SET lock_until = 0 WHERE tg_channel_id = ${tgChannelId}`);
+async function release(tgChannelId, token) {
+  await db.run(sql`
+    UPDATE eitaa_channels SET lock_until = 0, lock_owner = NULL
+    WHERE tg_channel_id = ${tgChannelId} AND lock_owner = ${token}`);
+}
+
+// A post's own claim, taken just before it is sent: even if two runs ever
+// overlapped, only one of them sends it.
+async function leasePost(tgChannelId, tgMessageId) {
+  const t = now();
+  return rowsOf(await db.run(sql`
+    UPDATE eitaa_posts SET lease_until = ${t + LOCK_SECONDS}
+    WHERE tg_channel_id = ${tgChannelId} AND tg_message_id = ${tgMessageId} AND status = 'queued' AND lease_until < ${t}
+    RETURNING tg_message_id`)).length > 0;
+}
+
+async function unleasePost(tgChannelId, tgMessageId) {
+  await db.run(sql`
+    UPDATE eitaa_posts SET lease_until = 0 WHERE tg_channel_id = ${tgChannelId} AND tg_message_id = ${tgMessageId}`);
 }
 
 async function finishRow(ch, row, status, issues, lastError) {
@@ -447,7 +472,8 @@ async function stopChannel(ch, reason, detail) {
 // empty | retry | timeout | busy | stopped | inactive.
 export async function processQueue(tgChannelId, { live, deadline, waitMs } = {}) {
   deadline = deadline || Date.now() + 10000;
-  if (!(await acquire(tgChannelId, waitMs === undefined ? (live ? LOCK_WAIT_MS : 0) : waitMs))) return 'busy';
+  const lockToken = newToken();
+  if (!(await acquire(tgChannelId, waitMs === undefined ? (live ? LOCK_WAIT_MS : 0) : waitMs, lockToken))) return 'busy';
   try {
     const ch = await getEitaaChannel(tgChannelId);
     if (!ch || ch.status !== 'active') return 'inactive';
@@ -482,6 +508,7 @@ export async function processQueue(tgChannelId, { live, deadline, waitMs } = {})
         m = f.message;
       }
 
+      if (!(await leasePost(tgChannelId, row.tg_message_id))) return 'busy';
       let r;
       try {
         r = await sendPost(ch, token, m, row, caps, deadline);
@@ -491,6 +518,7 @@ export async function processQueue(tgChannelId, { live, deadline, waitMs } = {})
       }
 
       if (r.status === 'retry') {
+        await unleasePost(tgChannelId, row.tg_message_id);
         if (r.reason === 'timeout') return 'timeout';
         const attempts = Number(row.attempts) + 1;
         await db.run(sql`
@@ -513,6 +541,7 @@ export async function processQueue(tgChannelId, { live, deadline, waitMs } = {})
 
       if (r.status === 'failed' && (r.reason === 'auth' || r.reason === 'chat')) {
         // Every later post would fail the same way: keep this one queued.
+        await unleasePost(tgChannelId, row.tg_message_id);
         console.warn('eitaa mirror stopped:', r.reason, r.detail);
         await stopChannel(ch, r.reason, r.detail);
         return 'stopped';
@@ -530,7 +559,7 @@ export async function processQueue(tgChannelId, { live, deadline, waitMs } = {})
     }
     return 'empty';
   } finally {
-    await release(tgChannelId);
+    await release(tgChannelId, lockToken);
   }
 }
 
@@ -544,8 +573,9 @@ async function claimAlbum(ch, post) {
   const t = now();
   const claimed = await db.run(sql`
     INSERT OR IGNORE INTO eitaa_albums (tg_channel_id, media_group_id, first_tg_id, created_at)
-    VALUES (${ch.tgChannelId}, ${String(post.media_group_id)}, ${post.message_id}, ${t})`);
-  if (!claimed.rowsAffected) return false;
+    VALUES (${ch.tgChannelId}, ${String(post.media_group_id)}, ${post.message_id}, ${t})
+    RETURNING first_tg_id`);
+  if (!rowsOf(claimed).length) return false;
 
   if (ch.albumPolicy === 'first') {
     await db.run(sql`
@@ -555,8 +585,9 @@ async function claimAlbum(ch, post) {
   }
   const r = await db.run(sql`
     INSERT OR IGNORE INTO eitaa_posts (tg_channel_id, tg_message_id, kind, status, issues, created_at, updated_at)
-    VALUES (${ch.tgChannelId}, ${post.message_id}, 'album', 'skipped', 'album', ${t}, ${t})`);
-  if (r.rowsAffected) {
+    VALUES (${ch.tgChannelId}, ${post.message_id}, 'album', 'skipped', 'album', ${t}, ${t})
+    RETURNING tg_message_id`);
+  if (rowsOf(r).length) {
     await db.run(sql`UPDATE eitaa_channels SET partial_count = partial_count + 1 WHERE tg_channel_id = ${ch.tgChannelId}`);
     const info = await channelInfo(ch.tgChannelId);
     await tell(ch.ownerTgId, E.albumSkipped(info.title, postLink(ch.tgChannelId, info.username, post.message_id)));
@@ -580,8 +611,9 @@ export async function mirrorChannelPost(post, { deadline }) {
         ? post.reply_to_message.message_id : null;
       const r = await db.run(sql`
         INSERT OR IGNORE INTO eitaa_posts (tg_channel_id, tg_message_id, kind, status, reply_to, had_markup, created_at, updated_at)
-        VALUES (${ch.tgChannelId}, ${post.message_id}, 'post', 'queued', ${replyTo}, ${post.reply_markup ? 1 : 0}, ${t}, ${t})`);
-      if (r.rowsAffected) live = post; // else a redelivery
+        VALUES (${ch.tgChannelId}, ${post.message_id}, 'post', 'queued', ${replyTo}, ${post.reply_markup ? 1 : 0}, ${t}, ${t})
+        RETURNING tg_message_id`);
+      if (rowsOf(r).length) live = post; // else a redelivery
     }
   }
   const status = await processQueue(ch.tgChannelId, { live, deadline });
@@ -599,8 +631,9 @@ export async function mirrorEdit(post) {
   const editDate = Number(post.edit_date) || now();
   const fresh = await db.run(sql`
     UPDATE eitaa_posts SET edit_date = ${editDate}, had_markup = ${post.reply_markup ? 1 : 0}
-    WHERE tg_channel_id = ${ch.tgChannelId} AND tg_message_id = ${post.message_id} AND edit_date < ${editDate}`);
-  if (!fresh.rowsAffected) return; // redelivered edit
+    WHERE tg_channel_id = ${ch.tgChannelId} AND tg_message_id = ${post.message_id} AND edit_date < ${editDate}
+    RETURNING tg_message_id`);
+  if (!rowsOf(fresh).length) return; // redelivered edit
   // Still queued: the edited version is what gets sent (it is re-read).
   if (row.status !== 'done' && row.status !== 'partial') return;
 
@@ -689,8 +722,9 @@ export async function sweepDeletions(tgChannelId, { deadline, force } = {}) {
   const t = now();
   const claimed = await db.run(sql`
     UPDATE eitaa_channels SET probed_at = ${t}
-    WHERE tg_channel_id = ${tgChannelId} AND (${force ? 1 : 0} = 1 OR probed_at < ${t - PROBE_INTERVAL_SECONDS})`);
-  if (!claimed.rowsAffected) return -1;
+    WHERE tg_channel_id = ${tgChannelId} AND (${force ? 1 : 0} = 1 OR probed_at < ${t - PROBE_INTERVAL_SECONDS})
+    RETURNING probed_at`);
+  if (!rowsOf(claimed).length) return -1;
   const ch = await getEitaaChannel(tgChannelId);
   if (!ch) return -1;
 

@@ -77,9 +77,10 @@ async function markQueued(tgChannelId, tgMessageIds) {
 // same update twice at once (seen with bursts of posts), "check, then
 // record" let both runs queue it and Bale got it twice.
 export async function enqueuePost(tgChannelId, m) {
-  const claimed = await db.run(sql`
-    INSERT OR IGNORE INTO delivered (chat_id, message_id, created_at) VALUES (${tgChannelId}, ${m.message_id}, ${now()})`);
-  if (!claimed.rowsAffected) return true; // the other delivery has it
+  const claimed = rowsOf(await db.run(sql`
+    INSERT OR IGNORE INTO delivered (chat_id, message_id, created_at) VALUES (${tgChannelId}, ${m.message_id}, ${now()})
+    RETURNING message_id`));
+  if (!claimed.length) return true; // the other delivery has it
   await dbg(tgChannelId, 'claim', m.message_id);
   const plan = planMessage(m);
   if (plan) await insertJob(tgChannelId, m.message_id, 'post', { plan });
@@ -278,25 +279,50 @@ async function runJob(link, job, deadline) {
 
 // ── Draining ────────────────────────────────────────────────────────────────
 
-async function acquire(tgChannelId) {
-  const t = now();
-  const r = await db.run(sql`
-    UPDATE channels SET lock_until = ${t + LOCK_SECONDS}
-    WHERE tg_channel_id = ${tgChannelId} AND lock_until < ${t}`);
-  if (r.rowsAffected > 0) await dbg(tgChannelId, 'acquire', 0);
-  return r.rowsAffected > 0;
+// The channel's sender lock. Success is read from the rows the statement
+// returns, never from rowsAffected: that count was seen to be wrong under
+// concurrent runs (two runs "held" the lock and sent the same job). The
+// token makes release only free the lock its own run holds.
+function newToken() {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
-async function release(tgChannelId) {
+async function acquire(tgChannelId, token) {
+  const t = now();
+  const rows = rowsOf(await db.run(sql`
+    UPDATE channels SET lock_until = ${t + LOCK_SECONDS}, lock_owner = ${token}
+    WHERE tg_channel_id = ${tgChannelId} AND lock_until < ${t}
+    RETURNING lock_owner`));
+  const ok = rows.length > 0 && rows[0].lock_owner === token;
+  if (ok) await dbg(tgChannelId, 'acquire', 0);
+  return ok;
+}
+
+async function release(tgChannelId, token) {
   await dbg(tgChannelId, 'release', 0);
-  await db.run(sql`UPDATE channels SET lock_until = 0 WHERE tg_channel_id = ${tgChannelId}`);
+  await db.run(sql`
+    UPDATE channels SET lock_until = 0, lock_owner = NULL WHERE tg_channel_id = ${tgChannelId} AND lock_owner = ${token}`);
+}
+
+// Leases one job to this run (a second safety net next to the lock).
+async function leaseJob(job, token) {
+  const t = now();
+  const rows = rowsOf(await db.run(sql`
+    UPDATE outbox SET lease_owner = ${token}, lease_until = ${t + LOCK_SECONDS}
+    WHERE id = ${job.id} AND (lease_until < ${t} OR lease_owner = ${token})
+    RETURNING lease_owner`));
+  return rows.length > 0 && rows[0].lease_owner === token;
+}
+
+async function unleaseJob(job, token) {
+  await db.run(sql`UPDATE outbox SET lease_until = 0, lease_owner = NULL WHERE id = ${job.id} AND lease_owner = ${token}`);
 }
 
 async function notifyOwner(link, text) {
   await api.sendMessage({ chat_id: link.ownerTgId, text }).catch(() => null);
 }
 
-async function drainLocked(link, deadline) {
+async function drainLocked(link, deadline, token) {
   for (const items of await takeStaleAlbums(link.tgChannelId, STALE_ALBUM_MS)) {
     await enqueueAlbum(link.tgChannelId, items);
   }
@@ -312,6 +338,9 @@ async function drainLocked(link, deadline) {
       return { status: 'waiting' };
     }
 
+    // Another run has this job (it shouldn't, holding the lock — but if it
+    // does, it must not be sent twice).
+    if (!(await leaseJob(job, token))) return { status: 'busy' };
     let r;
     await dbg(link.tgChannelId, 'send', job.id);
     try {
@@ -329,7 +358,10 @@ async function drainLocked(link, deadline) {
       if (job.alerted) recovered = true;
       continue;
     }
-    if (r.reason === 'timeout') return { status: 'timeout' };
+    if (r.reason === 'timeout') {
+      await unleaseJob(job, token);
+      return { status: 'timeout' };
+    }
 
     const title = await telegramChannelTitle(link.tgChannelId);
     const reasonText = T.chFailReasons[r.reason] || T.fail[r.reason] || T.fail.rejected;
@@ -347,6 +379,7 @@ async function drainLocked(link, deadline) {
     }
 
     // Temporary (Bale unreachable, rate limit, missing rights): keep it.
+    await unleaseJob(job, token);
     const attempts = job.attempts + 1;
     await db.run(sql`UPDATE outbox SET attempts = ${attempts}, last_reason = ${r.reason} WHERE id = ${job.id}`);
     if (isSystemError(r.reason)) await recordBaleFailure('mirror/' + r.reason);
@@ -367,10 +400,11 @@ export const probeStats = { runs: 0, checked: 0, gone: 0 };
 
 async function probeDeletions(link, deadline, force) {
   const t = now();
-  const claimed = await db.run(sql`
+  const claimed = rowsOf(await db.run(sql`
     UPDATE channels SET probed_at = ${t}
-    WHERE tg_channel_id = ${link.tgChannelId} AND (${force ? 1 : 0} = 1 OR probed_at < ${t - PROBE_INTERVAL_SECONDS})`);
-  if (!claimed.rowsAffected) return 0;
+    WHERE tg_channel_id = ${link.tgChannelId} AND (${force ? 1 : 0} = 1 OR probed_at < ${t - PROBE_INTERVAL_SECONDS})
+    RETURNING probed_at`));
+  if (!claimed.length) return 0;
   probeStats.runs++;
 
   const rows = rowsOf(await db.all(sql`
@@ -414,18 +448,19 @@ export async function drain(tgChannelId, { deadline, probe, forceProbe } = {}) {
   for (let round = 0; round < 3; round++) {
     const link = await getChannel(tgChannelId);
     if (!link) return { status: 'unlinked' };
-    if (!(await acquire(tgChannelId))) return result;
+    const token = newToken();
+    if (!(await acquire(tgChannelId, token))) return result;
     try {
-      result = await drainLocked(link, deadline);
+      result = await drainLocked(link, deadline, token);
       // Probing is quick (Telegram only), so it may run a little past the
       // deadline; the deletions it finds are applied now if time is left,
       // else on the next run.
       if (result.status === 'empty' && probe) {
         const gone = await probeDeletions(link, deadline + PROBE_GRACE_MS, forceProbe);
-        if (gone > 0 && Date.now() < deadline) result = await drainLocked(link, deadline);
+        if (gone > 0 && Date.now() < deadline) result = await drainLocked(link, deadline, token);
       }
     } finally {
-      await release(tgChannelId);
+      await release(tgChannelId, token);
     }
     // A job queued while this run held the lock saw 'busy': pick it up now.
     if (result.status !== 'empty' || Date.now() > deadline) return result;

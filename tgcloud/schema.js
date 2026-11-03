@@ -71,6 +71,7 @@ export const channels = table('channels', {
   deliveredCount: integer('delivered_count').notNull().default(0),
   failedCount:    integer('failed_count').notNull().default(0),
   lockUntil:      integer('lock_until').notNull().default(0),   // one sender at a time
+  lockOwner:      text('lock_owner'),                            // token of the run holding it
   probedAt:       integer('probed_at').notNull().default(0),    // last deletion check
 }, (t) => ({
   ownerIdx: index('idx_channels_owner').on(t.ownerTgId),
@@ -113,6 +114,9 @@ export const outbox = table('outbox', {
   lastReason:  text('last_reason'),
   alerted:     boolean('alerted').notNull().default(false),
   createdAt:   integer('created_at').notNull().default(sql`(unixepoch())`),
+  // A job is sent by the run that leased it (two runs once sent the same job).
+  leaseOwner:  text('lease_owner'),
+  leaseUntil:  integer('lease_until').notNull().default(0),
 }, (t) => ({
   orderIdx: index('idx_outbox_order').on(t.tgChannelId, t.sortKey, t.id),
 }));
@@ -159,6 +163,7 @@ export const eitaaChannels = table('eitaa_channels', {
   failedCount:  integer('failed_count').notNull().default(0),
   alerted:      boolean('alerted').notNull().default(false), // "sending is stuck" told once
   lockUntil:    integer('lock_until').notNull().default(0),
+  lockOwner:    text('lock_owner'),                    // token of the run holding it
   probedAt:     integer('probed_at').notNull().default(0),
   createdAt:    integer('created_at').notNull().default(sql`(unixepoch())`),
   linkedAt:     integer('linked_at'),
@@ -203,6 +208,7 @@ export const eitaaPosts = table('eitaa_posts', {
   createdAt:   integer('created_at').notNull().default(sql`(unixepoch())`),
   updatedAt:   integer('updated_at').notNull().default(sql`(unixepoch())`),
   checkedAt:   integer('checked_at').notNull().default(0),
+  leaseUntil:  integer('lease_until').notNull().default(0), // being sent by one run
 }, (t) => ({
   msgIdx:     uniqueIndex('uidx_eitaa_posts_msg').on(t.tgChannelId, t.tgMessageId),
   statusIdx:  index('idx_eitaa_posts_status').on(t.tgChannelId, t.status),

@@ -61,8 +61,8 @@ async function insertCode(tgId, tgChannelId) {
     const code = randomCode();
     const r = await db.run(sql`
       INSERT OR IGNORE INTO codes (code, tg_id, created_at, expires_at, tg_channel_id)
-      VALUES (${code}, ${tgId}, ${t}, ${t + CODE_TTL_SECONDS}, ${tgChannelId})`);
-    if (r.rowsAffected > 0) return { code, minutesLeft: CODE_TTL_SECONDS / 60 };
+      VALUES (${code}, ${tgId}, ${t}, ${t + CODE_TTL_SECONDS}, ${tgChannelId}) RETURNING code`);
+    if (rowsOf(r).length > 0) return { code, minutesLeft: CODE_TTL_SECONDS / 60 };
   }
   throw new Error('could not allocate a link code');
 }

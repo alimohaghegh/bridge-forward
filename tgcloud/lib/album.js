@@ -32,8 +32,8 @@ export async function collectAlbum(m) {
   await db.run(sql`
     INSERT OR IGNORE INTO album_items (key, chat_id, message_id, created_ms, item)
     VALUES (${key}, ${chatId}, ${m.message_id}, ${t}, ${JSON.stringify(item)})`);
-  const leader = (await db.run(sql`
-    INSERT OR IGNORE INTO albums (key, created_ms) VALUES (${key}, ${t})`)).rowsAffected > 0;
+  const leader = rowsOf(await db.run(sql`
+    INSERT OR IGNORE INTO albums (key, created_ms) VALUES (${key}, ${t}) RETURNING key`)).length > 0;
 
   if (!leader) {
     const album = await db.get(sql`SELECT closed FROM albums WHERE key = ${key}`);

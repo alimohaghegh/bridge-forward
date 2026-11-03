@@ -11,7 +11,7 @@ import { api, db, BotApiError } from 'sdk';
 import { eq, sql } from 'sdk/db';
 import { channels, users } from '../schema.js';
 import { baleCall, classifyError } from './bale.js';
-import { now } from './util.js';
+import { now, rowsOf } from './util.js';
 import { T, MENU } from './texts.js';
 
 const PENDING_SECONDS = 10 * 60;
@@ -37,9 +37,9 @@ export async function saveChannel(tgChannelId, baleChatId, ownerTgId) {
 // Removes a mirror if `tgId` set it up (or `force`, for the bot owner).
 export async function removeChannel(tgChannelId, tgId, force) {
   const r = force
-    ? await db.run(sql`DELETE FROM channels WHERE tg_channel_id = ${tgChannelId}`)
-    : await db.run(sql`DELETE FROM channels WHERE tg_channel_id = ${tgChannelId} AND owner_tg_id = ${tgId}`);
-  return r.rowsAffected > 0;
+    ? await db.run(sql`DELETE FROM channels WHERE tg_channel_id = ${tgChannelId} RETURNING tg_channel_id`)
+    : await db.run(sql`DELETE FROM channels WHERE tg_channel_id = ${tgChannelId} AND owner_tg_id = ${tgId} RETURNING tg_channel_id`);
+  return rowsOf(r).length > 0;
 }
 
 export async function countChannelDelivery(tgChannelId, ok) {
