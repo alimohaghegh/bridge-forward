@@ -4,7 +4,7 @@
 
 import { api, db } from 'sdk';
 import { sql } from 'sdk/db';
-import { baleCallOnce, safeErrorText } from './bale.js';
+import { baleCall, baleCallOnce, safeErrorText } from './bale.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { getUser } from './store.js';
 import { enqueuePost, enqueueEdit, drain } from './mirror.js';
@@ -126,8 +126,8 @@ export async function runBaleState() {
     const tracked = await db.get(sql`SELECT count(*) AS n, max(message_id) AS top FROM delivered WHERE chat_id = ${id}`);
     // The Bale bot's rights in the Bale chat (read only).
     let baleRights = null;
-    const me = await baleCallOnce('getMe', {});
-    const admins = await baleCallOnce('getChatAdministrators', { chat_id: ch.bale_chat_id });
+    const me = await baleCall('getMe', {});
+    const admins = await baleCall('getChatAdministrators', { chat_id: ch.bale_chat_id });
     if (admins.ok && me.ok) {
       const bot = (admins.result || []).find((a) => a.user && a.user.id === me.result.id);
       baleRights = bot ? Object.fromEntries(Object.entries(bot).filter(([k]) => k.startsWith('can_') || k === 'status')) : 'not admin';
