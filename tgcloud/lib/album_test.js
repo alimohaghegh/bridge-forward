@@ -1,7 +1,8 @@
 // Live album test (CI `album.yml`): numbered photos sent as albums of a fake
 // channel, each item in its own run and in shuffled order, like Telegram's
-// updates. Mirrored into the owner's own Bale chat; the report reads each
-// message back from Bale to see that the album arrived whole and in order.
+// updates. Mirrored into the owner's own Bale chat; the report shows that
+// each album arrived whole, and what Bale's answer to an album lists at each
+// place (Bale's forwards carry no photo, so nothing else can be read back).
 // Outputs hold counts and numbers only.
 
 import { api, db, InputFile } from 'sdk';
@@ -102,6 +103,27 @@ export async function albumTestPost({ album, item }) {
   };
 }
 
+// Sends the photos as one album, numbered in order, and returns what Bale's
+// own answer lists at each place. Removed at once.
+async function baleKeepsOrder(chat, photos) {
+  const media = [];
+  const uploads = {};
+  for (let i = 0; i < photos.length; i++) {
+    media.push({ type: 'photo', media: `attach://file${i}`, caption: String(i + 1) });
+    uploads[`file${i}`] = new InputFile(await api.getFileContent(photos[i].file_id), 'photo.jpg', { type: 'image/jpeg' });
+  }
+  const r = await baleCall('sendMediaGroup', { chat_id: chat, media }, uploads);
+  if (!r.ok) return { error: r.error_code };
+  const list = Array.isArray(r.result) ? r.result : [];
+  const ids = list.map((m) => m.message_id);
+  const seen = list.map((m) => {
+    const w = m.photo && m.photo.length ? Math.max(...m.photo.map((x) => Number(x.width) || 0)) : 0;
+    return `${m.caption ?? '-'}/${w}`;
+  });
+  for (const id of ids) await baleCall('deleteMessage', { chat_id: chat, message_id: id });
+  return { seen: seen.join(' '), idsAscending: ids.every((id, i) => i === 0 || id > ids[i - 1]), keys: Object.keys(list[0] || {}).join('+') };
+}
+
 export async function runAlbumReport() {
   const owner = await getUser(OWNER_TELEGRAM_ID);
   const st = await getSetting('album_test', null);
@@ -123,31 +145,18 @@ export async function runAlbumReport() {
       return n > messageId(st, a, 0) && n <= messageId(st, a, ITEMS);
     });
     const ids = rows.map((r) => JSON.parse(r.bale_ids)[0]);
-    // What Bale really holds, in its own message order.
-    const order = [];
-    for (const id of ids.slice().sort((x, y) => x - y)) {
-      const f = await baleCall('forwardMessage', { chat_id: chat, from_chat_id: chat, message_id: id });
-      const sizes = f.ok && f.result && f.result.photo;
-      const w = sizes && sizes.length ? Math.max(...sizes.map((x) => Number(x.width) || 0)) : 0;
-      order.push(f.ok ? (w ? (w - 80) / 10 : `keys:${Object.keys(f.result || {}).join('+')}`) : `error ${f.error_code}`);
-      if (f.ok && f.result) await baleCall('deleteMessage', { chat_id: chat, message_id: f.result.message_id });
-    }
     const mine = events.filter((e) => Number(e.key) === a);
     const times = mine.map((e) => Number(e.at_ms));
     const local = mine.map((e) => Number(e.run_id));
     albums.push({
       arrived: times.length, spreadMs: times.length ? Math.max(...times) - Math.min(...times) : null,
       localSpreadMs: local.length ? Math.max(...local) - Math.min(...local) : null,
-      mirrored: rows.length, idsAscending: ids.every((id, i) => i === 0 || id > ids[i - 1]), order: order.join(','),
+      mirrored: rows.length, idsAscending: ids.every((id, i) => i === 0 || id > ids[i - 1]),
     });
   }
-  // Does the database clock tick during a run?
-  const tick = [];
-  for (const start = Date.now(); Date.now() - start < 1500;) {
-    const d = await db.get(sql`SELECT ${DB_NOW_MS} AS ms`);
-    if (!tick.length || Number(d.ms) !== tick[tick.length - 1]) tick.push(Number(d.ms));
-  }
-  return { ok: true, dbTicks: tick.length, dbTickSpanMs: tick[tick.length - 1] - tick[0], sendMediaGroup: calls.sendMediaGroup || 0, sendPhoto: calls.sendPhoto || 0, queueLeft: left.n, albums };
+  const baleOrder = [];
+  for (let k = 0; k < 3; k++) baleOrder.push(await baleKeepsOrder(chat, st.photos));
+  return { ok: true, baleOrder, sendMediaGroup: calls.sendMediaGroup || 0, sendPhoto: calls.sendPhoto || 0, queueLeft: left.n, albums };
 }
 
 export async function runAlbumCleanup() {

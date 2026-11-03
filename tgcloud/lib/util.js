@@ -14,7 +14,8 @@ export function now() {
 
 // The database's clock, for times that runs compare with each other (locks,
 // leases, "album quiet", "stale"): the machines running the bot were seen
-// with clocks more than a minute apart, the database has one clock.
+// with clocks more than a minute apart, the database has one clock. It ticks
+// in whole seconds (measured), so DB_NOW_MS moves 1000 at a time.
 export const DB_NOW = sql.raw("CAST(strftime('%s','now') AS INTEGER)");
 export const DB_NOW_MS = sql.raw("CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)");
 
