@@ -164,8 +164,13 @@ The platform manages the bot's webhook for you, derived from your deployed
   CI by `scripts/write-config.mjs` and is git-ignored. Never commit or log it.
 - **Deploy only via GitHub Actions** (`.github/workflows/deploy.yml`): a local
   `npx tgcloud push` without `config.js` would deploy a broken bot.
-- Channels: `/channel` links a Telegram channel to a Bale channel
-  (`lib/channels.js`); `handlers/channel_post.js` re-publishes posts.
+- Channels: `/channel` links a Telegram channel to a Bale channel or group
+  (`lib/channels.js`; a code posted in the Bale chat proves access).
+  Posts, edits and deletions go through a durable ordered queue
+  (`lib/mirror.js`, table `outbox`) that keeps each job until Bale accepts it;
+  `.github/workflows/drain.yml` re-runs it every 30 min (`__drain`).
+  Deleted posts are found by probing `editMessageReplyMarkup` ("message to
+  edit not found"). Raw SELECTs must use `db.all`/`db.get`, not `db.run`.
 - Albums: one update per item; `lib/album.js` collects them in the DB and the
   first item's run sends them with `sendMediaGroup`.
 - Privacy: never store or log message contents; only ids, state, counters
