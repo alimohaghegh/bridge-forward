@@ -176,3 +176,19 @@ The platform manages the bot's webhook for you, derived from your deployed
 - Privacy: never store or log message contents; only ids, state, counters
   (album items are the one exception: held seconds, then deleted).
 - All user-facing texts are Persian and live in `lib/texts.js`.
+- `/start` shows one main menu (`lib/eitaa_link.js` showMenu); its first
+  button runs the old Bale /start (`lib/start.js`). All old commands remain.
+- Eitaa: Telegram channel → Eitaa channel via EitaaYar (`lib/eitaa.js`,
+  `https://eitaayar.ir/api/<token>/<method>`; only sendMessage/sendFile, one
+  file per post, no album/edit/delete). `lib/eitaa_mirror.js` keeps ids and
+  outcomes per post in `eitaa_posts` (no contents): a retried post is re-read
+  by forwarding it to the channel owner's chat and deleting the copy. Albums
+  are skipped (one notice) or sent as their first item; edits/deletions are
+  reported to the owner with the panel title `tg-<id>`. Simple mode uses the
+  owner's shared token and only an id the owner approved (reply to the
+  request); advanced mode stores the user's token AES-GCM-encrypted
+  (`EITAA_TOKEN_KEY`). Missing Eitaa secrets disable a mode, never a deploy.
+  Owner `/eitaa_diag [fmt|methods|size|gateway]` stores findings
+  (tags, limits, methods) in `eitaa_settings`.
+- CI logs are public (public repo): `tgcloud run` outputs must hold counts
+  and codes only, never ids, tokens or contents.

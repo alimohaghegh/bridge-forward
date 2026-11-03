@@ -1,9 +1,9 @@
 name: Channel mirror retry
 
-# Safety net for channel mirroring: re-sends channel posts still queued
-# (e.g. Bale was unreachable and no new post arrived since) and picks up
-# deleted posts. Every channel update already does this; this run covers
-# quiet periods. Prints only per-channel status words.
+# Safety net for channel mirroring (Bale and Eitaa): re-sends channel posts
+# still queued (e.g. the target was unreachable and no new post arrived
+# since) and picks up deleted posts. Every channel update already does this;
+# this run covers quiet periods. Prints only counts per status (public logs).
 on:
   schedule:
     - cron: '7,37 * * * *'
@@ -20,28 +20,37 @@ jobs:
   drain:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Write config from secrets
         env:
           BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
           OWNER_TELEGRAM_ID: ${{ secrets.OWNER_TELEGRAM_ID }}
-        run: node scripts/write-config.mjs
+          EITAA_YAR_TOKEN: ${{ secrets.EITAA_YAR_TOKEN }}
+          EITAA_OPERATOR_USERNAME: ${{ secrets.EITAA_OPERATOR_USERNAME }}
+          EITAA_TOKEN_KEY: ${{ secrets.EITAA_TOKEN_KEY }}
+        run: |
+          set +x
+          node scripts/write-config.mjs
 
       - name: Fetch cloud state
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
         run: npx tgcloud fetch
 
       - name: Send queued posts and check deletions
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
         run: |
           npx tgcloud run handlers/message '{ __drain: true }'

@@ -6,3 +6,6 @@ tgcloud/lib/config.js
 .env.*
 *.local
 .DS_Store
+*.pem
+*.key
+credentials*.json

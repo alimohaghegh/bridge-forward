@@ -4,6 +4,7 @@ import { db } from 'sdk';
 import { sql } from 'sdk/db';
 import { getBaleState, setBlocked, isOwner } from './store.js';
 import { formatDate, now } from './util.js';
+import { eitaaStats } from './eitaa_link.js';
 
 export const ADMIN_COMMANDS = new Set(['stats', 'users', 'block', 'unblock']);
 
@@ -19,6 +20,7 @@ async function stats() {
     FROM users`);
   const codes = await db.get(sql`SELECT count(*) AS c FROM codes WHERE used_at IS NULL AND expires_at > ${t}`);
   const state = await getBaleState();
+  const e = await eitaaStats();
   return [
     '📊 <b>آمار ربات</b>',
     `👥 کاربران: ${u.total || 0}`,
@@ -29,6 +31,11 @@ async function stats() {
     `⚠️ پیام‌های ناموفق: ${u.failed}`,
     `🔑 کدهای اتصال در انتظار: ${codes.c || 0}`,
     `🧭 خطاهای پیاپی بله: ${state.consecutiveFailures}`,
+    '',
+    '🪞 <b>ایتا</b>',
+    `کانال‌ها: ${e.total || 0} (فعال ${e.active || 0} · در انتظار تأیید ${e.pending || 0} · متوقف ${e.halted || 0} · پیشرفته ${e.advanced || 0})`,
+    `پست‌ها: کامل ${e.sent} · ناقص ${e.partial} · ناموفق ${e.failed} · در صف ${e.queued || 0}`,
+    `حالت ساده: ${e.simpleEnabled ? 'فعال' : 'غیرفعال'} · حالت پیشرفته: ${e.advancedEnabled ? 'فعال' : 'غیرفعال'}`,
   ].join('\n');
 }
 

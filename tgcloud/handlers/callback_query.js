@@ -1,5 +1,7 @@
 // handlers/callback_query.js — the «verify» button: pull pending Bale
-// messages, link any valid codes (for every user), and report back.
+// messages, link any valid codes (for every user), and report back. Also
+// the main menu (m:…), the Eitaa mirror screens (e:…) and the owner's
+// /eitaa_diag answers (dg:…).
 
 import { api } from 'sdk';
 import { pollBale, notifyLinked, hasPendingCode, hasPendingChannelCode } from '../lib/linking.js';
@@ -7,6 +9,9 @@ import { touchUser, getUser, isOwner } from '../lib/store.js';
 import { removeChannel } from '../lib/channels.js';
 import { safeErrorText } from '../lib/bale.js';
 import { T } from '../lib/texts.js';
+import * as EL from '../lib/eitaa_link.js';
+import { onFmtButton, onMethodButton } from '../lib/eitaa_diag.js';
+import { runStartFlow } from '../lib/start.js';
 
 async function answer(cq, text, showAlert) {
   try {
@@ -63,8 +68,71 @@ async function verifyChannel(cq) {
   }
 }
 
+// m:… and e:… buttons. Returns true when handled.
+async function menuButton(cq) {
+  const data = cq.data;
+  const tgId = cq.from.id;
+  const where = { cq };
+  const [ns, action, arg, arg2] = data.split(':');
+  const ch = Number(arg);
+
+  if (ns === 'dg') {
+    if (!isOwner(tgId)) return true;
+    if (action === 'f' || action === 'fs') await onFmtButton(cq);
+    else if (action === 'm') await onMethodButton(cq);
+    return true;
+  }
+  if (ns === 'm') {
+    if (action === 'home') await EL.showMenu(where, tgId);
+    else if (action === 'help') await EL.showHelp(where);
+    else if (action === 'bale') await runStartFlow(cq.message ? cq.message.chat.id : tgId, tgId);
+    else if (action === 'bch') await EL.showBaleChannels(where, tgId);
+    return true;
+  }
+  if (ns !== 'e') return false;
+  switch (action) {
+    case 'new': await EL.startLink(where, tgId); break;
+    case 'cancel': await EL.cancelStep(where, tgId); break;
+    case 'pick': await EL.pickChannel(where, tgId, ch); break;
+    case 'ms': await EL.chooseSimple(where, tgId, ch); break;
+    case 'ma': await EL.chooseAdvanced(where, tgId, ch); break;
+    case 'list': await EL.showList(where, tgId); break;
+    case 'ch': await EL.showPanel(where, tgId, ch); break;
+    case 'pau': await EL.setPaused(where, tgId, ch, true); break;
+    case 'res': await EL.setPaused(where, tgId, ch, false); break;
+    case 'set': await EL.showSettings(where, tgId, ch); break;
+    case 'alb': await EL.setAlbumPolicy(where, tgId, ch, arg2); break;
+    case 'ntf': await EL.toggleNotify(where, tgId, ch); break;
+    case 'rep': await EL.showReport(where, tgId, ch); break;
+    case 'rt': await EL.retryNow(where, tgId, ch); break;
+    case 'del': await EL.checkDeletions(where, tgId, ch); break;
+    case 'unl': await EL.askUnlink(where, tgId, ch); break;
+    case 'unly': await EL.unlink(where, tgId, ch); break;
+    case 'rej': await EL.rejectRequest(cq, ch); break;
+    case 'reqs': if (isOwner(tgId)) await EL.listRequests(tgId); break;
+    default: break;
+  }
+  return true;
+}
+
 export default async function (cq) {
   if (!cq || !cq.from) return;
+  if (typeof cq.data === 'string' && /^(m|e|dg):/.test(cq.data)) {
+    try {
+      const user = await touchUser(cq.from.id);
+      if (user.blocked && !isOwner(cq.from.id)) {
+        await answer(cq, T.blocked, true);
+        return;
+      }
+      // Answer first: some screens take a few seconds (retries, checks).
+      await answer(cq);
+      await menuButton(cq);
+    } catch (e) {
+      console.error('menu button failed:', e && e.name, safeErrorText(e));
+      await api.sendMessage({ chat_id: cq.from.id, text: '⚠️ خطای غیرمنتظره‌ای رخ داد. لطفاً دوباره امتحان کنید.' }).catch(() => null);
+    }
+    return;
+  }
   if (typeof cq.data === 'string' && cq.data.startsWith('unch:')) {
     await unlinkChannel(cq);
     return;

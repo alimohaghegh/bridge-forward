@@ -134,3 +134,96 @@ export const mirrored = table('mirrored', {
   msgIdx:     uniqueIndex('uidx_mirrored_msg').on(t.tgChatId, t.tgMessageId),
   createdIdx: index('idx_mirrored_created').on(t.createdAt),
 }));
+
+// ── Telegram channel → Eitaa channel (via EitaaYar) ─────────────────────────
+// Only ids, states, timestamps, counters and (encrypted) tokens: post
+// contents are never stored. Failed posts are re-read from Telegram when
+// they are retried.
+
+// One mirror per Telegram channel. status: draft (mode not chosen yet) |
+// pending (simple mode, waiting for the bot owner) | active | paused |
+// stopped (the bot lost access; see stop_reason). mode: simple (the bot
+// owner's EitaaYar account) | advanced (the user's own token, token_enc).
+export const eitaaChannels = table('eitaa_channels', {
+  tgChannelId:  integer('tg_channel_id').primaryKey(),
+  ownerTgId:    integer('owner_tg_id').notNull(),
+  mode:         text('mode'),
+  status:       text('status').notNull().default('draft'),
+  eitaaChatId:  text('eitaa_chat_id'),                 // numeric id or public username
+  tokenEnc:     text('token_enc'),                     // advanced mode only
+  albumPolicy:  text('album_policy').notNull().default('skip'), // skip | first
+  notifyEdits:  boolean('notify_edits').notNull().default(true),
+  stopReason:   text('stop_reason'),
+  sentCount:    integer('sent_count').notNull().default(0),
+  partialCount: integer('partial_count').notNull().default(0),
+  failedCount:  integer('failed_count').notNull().default(0),
+  alerted:      boolean('alerted').notNull().default(false), // "sending is stuck" told once
+  lockUntil:    integer('lock_until').notNull().default(0),
+  probedAt:     integer('probed_at').notNull().default(0),
+  createdAt:    integer('created_at').notNull().default(sql`(unixepoch())`),
+  linkedAt:     integer('linked_at'),
+}, (t) => ({
+  ownerIdx: index('idx_eitaa_channels_owner').on(t.ownerTgId),
+}));
+
+// Simple-mode requests waiting for the bot owner. eitaa_ref is what the user
+// typed (shown to the owner only, never used for sending); the owner replies
+// to owner_msg_id with the numeric id from the EitaaYar panel.
+export const eitaaRequests = table('eitaa_requests', {
+  id:            integer('id').primaryKey({ autoIncrement: true }),
+  tgChannelId:   integer('tg_channel_id').notNull(),
+  requesterTgId: integer('requester_tg_id').notNull(),
+  eitaaRef:      text('eitaa_ref').notNull(),
+  status:        text('status').notNull().default('pending'), // pending | approved | rejected | cancelled
+  ownerMsgId:    integer('owner_msg_id'),
+  createdAt:     integer('created_at').notNull().default(sql`(unixepoch())`),
+  decidedAt:     integer('decided_at'),
+}, (t) => ({
+  statusIdx: index('idx_eitaa_requests_status').on(t.status),
+  msgIdx:    index('idx_eitaa_requests_msg').on(t.ownerMsgId),
+}));
+
+// One row per Telegram post seen in a mirrored channel: its Eitaa message
+// ids and outcome. status: queued (waiting / retrying) | done (complete) |
+// partial (sent with issues) | skipped (nothing sent) | failed | deleted.
+// issues: comma-separated codes (album, too_large, spoiler, …) — no content.
+export const eitaaPosts = table('eitaa_posts', {
+  tgChannelId: integer('tg_channel_id').notNull(),
+  tgMessageId: integer('tg_message_id').notNull(),
+  kind:        text('kind').notNull().default('post'), // post | album
+  status:      text('status').notNull().default('queued'),
+  eitaaIds:    text('eitaa_ids').notNull().default('[]'), // JSON array
+  partsDone:   integer('parts_done').notNull().default(0), // resume point of a split post
+  issues:      text('issues'),
+  replyTo:     integer('reply_to'),                    // Telegram id the post replies to
+  hadMarkup:   boolean('had_markup').notNull().default(false),
+  editDate:    integer('edit_date').notNull().default(0),
+  attempts:    integer('attempts').notNull().default(0),
+  lastError:   text('last_error'),                     // short reason code
+  createdAt:   integer('created_at').notNull().default(sql`(unixepoch())`),
+  updatedAt:   integer('updated_at').notNull().default(sql`(unixepoch())`),
+  checkedAt:   integer('checked_at').notNull().default(0),
+}, (t) => ({
+  msgIdx:     uniqueIndex('uidx_eitaa_posts_msg').on(t.tgChannelId, t.tgMessageId),
+  statusIdx:  index('idx_eitaa_posts_status').on(t.tgChannelId, t.status),
+  createdIdx: index('idx_eitaa_posts_created').on(t.createdAt),
+}));
+
+// Albums seen (one row per album, so only one notice/post per album).
+export const eitaaAlbums = table('eitaa_albums', {
+  tgChannelId:  integer('tg_channel_id').notNull(),
+  mediaGroupId: text('media_group_id').notNull(),
+  firstTgId:    integer('first_tg_id').notNull(),
+  createdAt:    integer('created_at').notNull().default(sql`(unixepoch())`),
+}, (t) => ({
+  albumIdx:   uniqueIndex('uidx_eitaa_albums').on(t.tgChannelId, t.mediaGroupId),
+  createdIdx: index('idx_eitaa_albums_created').on(t.createdAt),
+}));
+
+// What /eitaa_diag found out about EitaaYar (working HTML tags, limits,
+// edit/delete methods) and short diagnostic state. key → JSON value.
+export const eitaaSettings = table('eitaa_settings', {
+  key:       text('key').primaryKey(),
+  value:     text('value'),
+  updatedAt: integer('updated_at').notNull().default(sql`(unixepoch())`),
+});

@@ -1,17 +1,24 @@
-// handlers/message.js — every private message: commands, linking prompts and
-// forwarding to the user's Bale chat. Message contents are never stored or logged.
+// handlers/message.js — every private message: the main menu, commands,
+// linking prompts (Bale account, Bale channel, Eitaa channel) and forwarding
+// to the user's Bale chat. Message contents are never stored or logged.
 
 import { api } from 'sdk';
 import { baleCall, classifyError, isSystemError, safeErrorText } from '../lib/bale.js';
 import { isSupported, deliver, deliverAlbum } from '../lib/forward.js';
 import { isAlbumItem, collectAlbum, releaseAlbumItems } from '../lib/album.js';
 import { drainAll } from '../lib/mirror.js';
+import { drainEitaa } from '../lib/eitaa_mirror.js';
+import {
+  showMenu, showHelp, isEitaaStep, handleEitaaStep, handleOwnerReply, looksLikeEitaaToken, listRequests,
+} from '../lib/eitaa_link.js';
+import { runEitaaDiag, runFmtDiag, runMethodsDiag, runSizeDiag, runEitaaCiProbe, gatewayProbe } from '../lib/eitaa_diag.js';
+import { sendLinkInstructions } from '../lib/start.js';
 import {
   listChannels, saveChannel, setPending, clearPending, activePending, telegramChannelRef,
   checkTelegramChannel, baleChannelRef, checkBaleChannel, telegramChannelTitle, confirmBaleTarget,
 } from '../lib/channels.js';
 import {
-  createCode, getOrCreateCode, deletePendingCodes, hasPendingCode, pollBale, notifyLinked, createChannelCode,
+  deletePendingCodes, hasPendingCode, pollBale, notifyLinked, createChannelCode,
 } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
@@ -20,9 +27,7 @@ import {
   touchUser, getUser, clearLink, claimMessage, maybeCleanup, countDelivery, isOwner,
   recordBaleSuccess, recordBaleFailure,
 } from '../lib/store.js';
-import {
-  T, linkInstructions, statusText, baleStartLink, VERIFY_BUTTON, OPEN_BALE_BUTTON, VERIFY_CHANNEL_BUTTON,
-} from '../lib/texts.js';
+import { T, E, statusText, VERIFY_CHANNEL_BUTTON } from '../lib/texts.js';
 import { TELEGRAM_BOT_USERNAME } from '../lib/util.js';
 
 async function reply(chatId, text, extra) {
@@ -37,19 +42,6 @@ async function replyHtml(chatId, text, extra) {
   await reply(chatId, text, { parse_mode: 'HTML', ...extra });
 }
 
-async function sendLinkInstructions(chatId, tgId, { fresh, prefix } = {}) {
-  const { code, minutesLeft } = fresh ? await createCode(tgId) : await getOrCreateCode(tgId);
-  const text = (prefix ? prefix + '\n\n' : '') + linkInstructions(code, minutesLeft);
-  await replyHtml(chatId, text, {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: OPEN_BALE_BUTTON, url: baleStartLink(code) }],
-        [{ text: VERIFY_BUTTON, callback_data: 'verify' }],
-      ],
-    },
-  });
-}
-
 function parseCommand(text) {
   if (typeof text !== 'string') return null;
   const m = text.match(/^\/([A-Za-z0-9_]+)(?:@(\S+))?(?:\s+([\s\S]*))?$/);
@@ -62,11 +54,9 @@ function parseCommand(text) {
 async function handleCommand(cmd, chatId, tgId, user) {
   switch (cmd.name) {
     case 'start':
-      if (user.baleChatId) {
-        await reply(chatId, statusText(user) + '\n\nراهنما: /help');
-      } else {
-        await sendLinkInstructions(chatId, tgId);
-      }
+    case 'menu':
+      // The Bale part of the old /start is the menu's first button.
+      await showMenu({ chatId }, tgId);
       return true;
 
     case 'link':
@@ -94,7 +84,7 @@ async function handleCommand(cmd, chatId, tgId, user) {
       return true;
 
     case 'help':
-      await replyHtml(chatId, T.help);
+      await showHelp({ chatId });
       return true;
 
     case 'channel':
@@ -143,6 +133,21 @@ async function handleCommand(cmd, chatId, tgId, user) {
     const lines = [];
     for (const [id, status] of Object.entries(r)) lines.push(`${await telegramChannelTitle(Number(id))}: ${labels[status] || status}`);
     await reply(chatId, '🔄 ' + (lines.join('\n') || 'کانالی متصل نیست'));
+    return true;
+  }
+
+  if (cmd.name === 'eitaa_diag' && isOwner(tgId)) {
+    const [sub, extra] = cmd.arg.toLowerCase().split(/\s+/);
+    if (sub === 'fmt') await runFmtDiag();
+    else if (sub === 'methods') await runMethodsDiag();
+    else if (sub === 'size') await runSizeDiag(extra);
+    else if (sub === 'gateway') await reply(chatId, '🌐 ' + JSON.stringify(await gatewayProbe(), null, 1));
+    else await runEitaaDiag();
+    return true;
+  }
+
+  if (cmd.name === 'requests' && isOwner(tgId)) {
+    await listRequests(chatId);
     return true;
   }
 
@@ -282,8 +287,15 @@ export default async function (message, ctx) {
   if (!(ctx && ctx.update) && message && message.__diag === true) return runDiag();
   if (!(ctx && ctx.update) && message && message.__probe === true) return runDeleteProbe();
   if (!(ctx && ctx.update) && message && message.__mirrortest === true) return runMirrorTest();
-  // Scheduled run (GitHub Actions): retry queued channel posts, find deletions.
-  if (!(ctx && ctx.update) && message && message.__drain === true) return drainAll();
+  if (!(ctx && ctx.update) && message && message.__eitaa === true) return runEitaaCiProbe();
+  // Scheduled run (GitHub Actions): retry queued channel posts, find
+  // deletions. The output lands in public CI logs: counts only, no ids.
+  if (!(ctx && ctx.update) && message && message.__drain === true) {
+    const [baleById, eitaa] = await Promise.all([drainAll(), drainEitaa(10000)]);
+    const bale = {};
+    for (const status of Object.values(baleById)) bale[status] = (bale[status] || 0) + 1;
+    return { bale, eitaa };
+  }
 
   if (!message || !message.chat || message.chat.type !== 'private' || !message.from || message.from.is_bot) return;
   const chatId = message.chat.id;
@@ -298,6 +310,9 @@ export default async function (message, ctx) {
       await reply(chatId, T.blocked);
       return;
     }
+
+    // The bot owner answering a simple-mode Eitaa request.
+    if (isOwner(tgId) && message.reply_to_message && (await handleOwnerReply(message))) return;
 
     const cmd = parseCommand(message.text);
 
@@ -317,7 +332,16 @@ export default async function (message, ctx) {
     if (step && cmd) {
       // Any command ends a pending /channel setup (/channel restarts it).
       if (cmd.name !== 'cancel') await clearPending(tgId);
+    } else if (step && isEitaaStep(step)) {
+      if (await handleEitaaStep(step, message, user)) return;
     } else if (step && (await handleChannelStep(step, message, user))) {
+      return;
+    }
+
+    // An EitaaYar token sent outside its step: delete it, never forward it.
+    if (!cmd && (looksLikeEitaaToken(message.text) || looksLikeEitaaToken(message.caption))) {
+      await api.deleteMessage({ chat_id: chatId, message_id: message.message_id }).catch(() => null);
+      await reply(chatId, E.tokenLeakWarn);
       return;
     }
 

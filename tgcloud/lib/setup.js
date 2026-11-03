@@ -15,9 +15,12 @@ import { splitText } from './util.js';
 import { toBaleMarkdown, formatChunks } from './format.js';
 import { planMessage, planAlbum } from './forward.js';
 import { queueStats } from './mirror.js';
+import { toEitaaChunks } from './eitaa_html.js';
+import { buildParts } from './eitaa_mirror.js';
+import { eitaaCaps, encryptToken, decryptToken, advancedModeEnabled, simpleModeEnabled, webCryptoAvailable } from './eitaa.js';
 
 const USER_COMMANDS = [
-  { command: 'start', description: 'شروع و اتصال حساب بله' },
+  { command: 'start', description: 'منوی اصلی' },
   { command: 'link', description: 'گرفتن کد اتصال جدید' },
   { command: 'status', description: 'وضعیت اتصال' },
   { command: 'test', description: 'ارسال پیام آزمایشی به بله' },
@@ -36,6 +39,8 @@ const OWNER_COMMANDS = [
   { command: 'unblock', description: 'رفع مسدودی کاربر (مدیر)' },
   { command: 'diag', description: 'بررسی اتصال به بله (مدیر)' },
   { command: 'sync', description: 'ارسال فوری صف کانال‌ها (مدیر)' },
+  { command: 'requests', description: 'درخواست‌های ایتا در انتظار (مدیر)' },
+  { command: 'eitaa_diag', description: 'تشخیص ایتایار: fmt | methods | size (مدیر)' },
 ];
 
 async function step(fn) {
@@ -111,6 +116,7 @@ export async function runSetup() {
   });
 
   out.mirrorQueue = await step(async () => ({ ok: true, ...(await queueStats()) }));
+  out.eitaa = await step(eitaaSelfTest);
   out.importOldLinks = await step(importOldLinks);
   out.selfTest = await step(selfTest);
 
@@ -130,6 +136,39 @@ async function importOldLinks() {
       FROM links WHERE bale_chat_id IS NOT NULL
     )`);
   return { ok: true, imported: r.rowsAffected };
+}
+
+// Eitaa: HTML conversion, post plans and token encryption (no network).
+async function eitaaSelfTest() {
+  const checks = {};
+  const opts = { tags: ['b', 'i', 'u', 's', 'a', 'code', 'pre'], escapesOk: true, countMarkup: true, limit: 4096 };
+  const one = (text, entities, o) => toEitaaChunks(text, entities, { ...opts, ...o }).chunks;
+  checks.plain = one('a < b & c', [])[0].text === 'a < b & c' && one('a < b', [])[0].html === false;
+  checks.escape = one('a<b', [{ type: 'bold', offset: 0, length: 3 }])[0].text === '<b>a&lt;b</b>';
+  checks.nested = one('ab cd', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 2 }])[0].text === '<b>ab <i>cd</i></b>';
+  checks.overlap = one('abcdefgh', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 5 }])[0].text === '<b>abc<i>de</i></b><i>fgh</i>';
+  checks.utf16 = one('😀x', [{ type: 'bold', offset: 2, length: 1 }])[0].text === '😀<b>x</b>';
+  checks.link = one('go', [{ type: 'text_link', offset: 0, length: 2, url: 'https://a.b/?x="1"&y' }])[0].text === '<a href="https://a.b/?x=&quot;1&quot;&amp;y">go</a>';
+  const sp = toEitaaChunks('secret', [{ type: 'spoiler', offset: 0, length: 6 }], opts);
+  checks.unsupported = sp.chunks[0].text === 'secret' && sp.issues.has('spoiler');
+  const long = toEitaaChunks('x'.repeat(30) + '\n\n' + 'y'.repeat(30), [{ type: 'bold', offset: 25, length: 10 }], { ...opts, limit: 40 });
+  checks.split = long.chunks.length === 2 && long.chunks[0].text.endsWith('<b>xxxxx\n\n</b>') && long.chunks[1].text.startsWith('<b>');
+  const caps = await eitaaCaps();
+  const fwd = buildParts({ message_id: 5, text: 'hi', forward_origin: { type: 'channel', chat: { title: 'X' } } }, caps, { link: 'https://t.me/c/1/5' });
+  checks.forward = fwd.parts.length === 1 && fwd.parts[0].html && fwd.parts[0].text.endsWith('</i>\nhi');
+  const big = buildParts({ message_id: 6, document: { file_id: 'f', file_size: 30 * 1024 * 1024 }, caption: 'c' }, caps, { link: 'L', public: true });
+  checks.bigFile = big.issues.has('too_large') && big.parts.length === 1 && big.parts[0].type === 'text' && big.parts[0].text.includes('L');
+  const photo = buildParts({ message_id: 7, photo: [{ file_id: 'p', file_size: 10 }], caption: 'c' }, caps, { link: 'L' });
+  checks.photo = photo.parts.length === 1 && photo.parts[0].type === 'file' && photo.parts[0].spec.name === 'photo.jpg';
+  checks.dice = buildParts({ message_id: 8, dice: { emoji: '🎲', value: 3 } }, caps, { link: 'L' }).parts.length === 0;
+  if (advancedModeEnabled()) {
+    const enc = await encryptToken('bot1:test-token');
+    checks.crypto = (await decryptToken(enc)) === 'bot1:test-token' && (!webCryptoAvailable() || enc.startsWith('v1:'));
+  }
+  return {
+    ok: Object.values(checks).every(Boolean), checks,
+    simpleMode: simpleModeEnabled(), advancedMode: advancedModeEnabled(), webCrypto: webCryptoAvailable(),
+  };
 }
 
 // Exercises the database helpers with a fake user id (-1), then cleans up.

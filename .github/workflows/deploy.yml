@@ -1,5 +1,8 @@
 name: Deploy bot
 
+# Runs only for pushes to main and manual runs (never for pull requests, so
+# forks can't reach the secrets). Secrets go only to the steps that need
+# them, as env vars; nothing echoes them and shell tracing stays off.
 on:
   push:
     branches: [main]
@@ -16,31 +19,40 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Write config from secrets
         env:
           BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
           OWNER_TELEGRAM_ID: ${{ secrets.OWNER_TELEGRAM_ID }}
-        run: node scripts/write-config.mjs
+          EITAA_YAR_TOKEN: ${{ secrets.EITAA_YAR_TOKEN }}
+          EITAA_OPERATOR_USERNAME: ${{ secrets.EITAA_OPERATOR_USERNAME }}
+          EITAA_TOKEN_KEY: ${{ secrets.EITAA_TOKEN_KEY }}
+        run: |
+          set +x
+          node scripts/write-config.mjs
 
       # CI has no local .tgcloud state: fetch the cloud snapshot first so the
       # push is a normal, conditional deploy.
       - name: Fetch cloud state
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
         run: npx tgcloud fetch
 
       - name: Push modules
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
         run: |
           if ! npx tgcloud push; then
             echo "::warning::Normal push was rejected; retrying with --force (single deployer)."
@@ -48,21 +60,27 @@ jobs:
           fi
 
       - name: Migrate database (safe changes only)
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
         run: npx tgcloud migrate --safe
 
       # push already refreshes the webhook; with a CI token this call may be
       # refused (Unauthorized), so it is best-effort.
       - name: Sync Telegram webhook
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
         run: |
           npx tgcloud webhook sync || echo "::warning::webhook sync was refused; push already refreshed the webhook."
           npx tgcloud webhook || true
 
+      # The URL (with the token) goes to curl on stdin, not on its command line.
       - name: Remove Bale webhook (getUpdates needs it off)
         env:
           BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
         run: |
-          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
-            "https://tapi.bale.ai/bot${BALE_BOT_TOKEN}/deleteWebhook" 2>/dev/null) || code="network-error"
+          set +x
+          code=$(printf 'url = "https://tapi.bale.ai/bot%s/deleteWebhook"\n' "$BALE_BOT_TOKEN" \
+            | curl -sS -o /dev/null -w '%{http_code}' -X POST -K - 2>/dev/null) || code="network-error"
           echo "Bale deleteWebhook HTTP status: $code"
           if [ "$code" != "200" ]; then
             echo "::warning::Bale deleteWebhook from GitHub did not return 200; the setup step below retries from Telegram's side."
@@ -70,7 +88,9 @@ jobs:
 
       # Clears Bale's webhook from Telegram's side, sets the command menu and
       # runs a database self-test. Informational: a slow Bale must not block
-      # a deploy that has already gone out.
+      # a deploy that has already gone out. Prints counts and checks only.
       - name: Setup and smoke check
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
         run: |
           npx tgcloud run handlers/message '{ __setup: true }' || echo '::warning::Setup/smoke check did not finish; see the output above.'
