@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildParts } from '../tgcloud/lib/eitaa_mirror.js';
+import { eitaaCaps } from '../tgcloud/lib/eitaa.js';
 
 const caps = { tags: ['b', 'i', 'code', 'a'], escapesOk: true, textLimit: 4096, captionLimit: 1024, limitCountsMarkup: true };
 
@@ -21,6 +22,14 @@ test('file over 20 MB: caption plus link for public channels', () => {
   assert.ok(r.issues.has('too_large'));
   assert.equal(r.parts.length, 1);
   assert.ok(r.parts[0].text.includes('https://t.me/x/6'));
+});
+
+test('stored answers can no longer switch Eitaa formatting off', async () => {
+  const live = await eitaaCaps();
+  assert.deepEqual(live.tags, ['b', 'i', 'code', 'a']);
+  assert.equal(live.escapesOk, true);
+  const r = buildParts({ message_id: 9, text: 'bold', entities: [{ type: 'bold', offset: 0, length: 4 }] }, live, { link: 'L' });
+  assert.equal(r.parts[0].text, '<b>bold</b>');
 });
 
 test('dice and similar posts produce nothing (owner is told)', () => {

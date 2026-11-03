@@ -45,10 +45,13 @@ test('unsupported tags are never emitted; losses are recorded', () => {
   assert.deepEqual([...r.issues].sort(), ['blockquote', 'spoiler', 'strikethrough', 'underline']);
 });
 
-test('a stored tag list can narrow but never widen the tags', () => {
-  const r = one('x', [{ type: 'underline', offset: 0, length: 1 }], { tags: ['b', 'u', 's', 'pre'] });
-  assert.equal(r.chunks[0].text, 'x');
-  assert.ok(r.issues.has('underline'));
+test('the Telegram test post renders like Telegram where Eitaa can', () => {
+  const lines = ['test normal', 'test bold', 'test italic', 'test link', 'test underline', 'test strike', 'tsetmonospace', 'tset quote'];
+  const at = (i) => lines.slice(0, i).join('\n').length + (i ? 1 : 0);
+  const e = (type, i, extra) => ({ type, offset: at(i), length: lines[i].length, ...extra });
+  const r = one(lines.join('\n'), [e('bold', 1), e('italic', 2), e('text_link', 3, { url: 'https://example.com/x' }), e('underline', 4), e('strikethrough', 5), e('code', 6), e('blockquote', 7)]);
+  assert.equal(r.chunks[0].html, true);
+  assert.equal(r.chunks[0].text, 'test normal\n<b>test bold</b>\n<i>test italic</i>\n<a href="https://example.com/x">test link</a>\ntest underline\ntest strike\n<code>tsetmonospace</code>\ntset quote');
 });
 
 test('pre becomes one <code> per line', () => {

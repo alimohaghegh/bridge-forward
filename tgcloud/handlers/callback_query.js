@@ -10,7 +10,7 @@ import { removeChannel } from '../lib/channels.js';
 import { safeErrorText } from '../lib/bale.js';
 import { T } from '../lib/texts.js';
 import * as EL from '../lib/eitaa_link.js';
-import { onFmtButton, onMethodButton } from '../lib/eitaa_diag.js';
+import { onMethodButton } from '../lib/eitaa_diag.js';
 import { runStartFlow } from '../lib/start.js';
 import { onBaleFmtButton } from '../lib/bale_fmt.js';
 
@@ -83,8 +83,7 @@ async function menuButton(cq) {
   }
   if (ns === 'dg') {
     if (!isOwner(tgId)) return true;
-    if (action === 'f' || action === 'fs') await onFmtButton(cq);
-    else if (action === 'm') await onMethodButton(cq);
+    if (action === 'm') await onMethodButton(cq);
     return true;
   }
   if (ns === 'm') {

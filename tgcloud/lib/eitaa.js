@@ -214,8 +214,11 @@ export const DEFAULT_CAPTION_LIMIT = 1024;
 export async function eitaaCaps() {
   const caps = await getSetting('caps', {});
   return {
-    tags: Array.isArray(caps.tags) ? caps.tags : DEFAULT_TAGS,
-    escapesOk: caps.escapesOk !== false,
+    // Fixed, not taken from a stored answer: a save with nothing ticked once
+    // switched all formatting off. These tags and &amp; &lt; &gt; were
+    // verified live in Eitaa.
+    tags: DEFAULT_TAGS,
+    escapesOk: true,
     textLimit: Number(caps.textLimit) || DEFAULT_TEXT_LIMIT,
     captionLimit: Number(caps.captionLimit) || DEFAULT_CAPTION_LIMIT,
     limitCountsMarkup: caps.limitCountsMarkup !== false,

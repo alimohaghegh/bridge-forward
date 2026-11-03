@@ -8,7 +8,7 @@ import { api, db, fetch, InputFile } from 'sdk';
 import { sql } from 'sdk/db';
 import {
   SHARED_TOKEN, RELAY_URL, relayEnabled, eitaaCallOnce, eitaaCall, channelToken, describeFailure, messageIdOf, redact,
-  getSetting, setSetting, updateCaps, eitaaCaps, webCryptoAvailable, simpleModeEnabled, advancedModeEnabled,
+  getSetting, updateCaps, eitaaCaps, webCryptoAvailable, simpleModeEnabled, advancedModeEnabled,
 } from './eitaa.js';
 import { channelRow } from './eitaa_mirror.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
@@ -16,9 +16,6 @@ import { now, sleep } from './util.js';
 
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAA7UlEQVR42s3CQSsDAACG4e+XODg4ODg4OFArErUiUSsStSJRKxJvikStSNSKRK1I1IpErUjUiuTg4ODg1/gb79OTNj5V0867ajpoqaaTN9V08aKabp5U00NTNb08qqbAvWoGuFXNEA3VFLlRzShXqhnnQjUl6qqZ4lw1M5yqpsyxauapqWaRI9VUOFDNCnuqWaOqmg12VbPFtmp22FRNlQ3V7LOumkNWVVNjWTUnVFRzxpJq6iyo5pI51VxTVk2DWdXcMa2aByZV06SkmmcmVPPKmGpajKjmg6JqvhhWzTeDqvmhXzW/FFTzR5/qPzcpIkRiPeIRAAAAAElFTkSuQmCC';
 const BUDGET_MS = 23000;
-
-// Tags offered in /eitaa_diag fmt, in the order of the test messages.
-const FMT_TAGS = ['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'a', 'code', 'pre', 'blockquote', 'tg-spoiler', 'span', 'esc'];
 
 function b64(s) {
   const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -234,17 +231,8 @@ const FMT_MESSAGES = [
   '6) <tg-spoiler>tg-spoiler</tg-spoiler> · <span class="tg-spoiler">span</span> · esc: &amp; &lt; &gt;',
 ];
 
-function fmtKeyboard(selected) {
-  const rows = [];
-  for (let i = 0; i < FMT_TAGS.length; i += 3) {
-    rows.push(FMT_TAGS.slice(i, i + 3).map((t) => ({
-      text: `${selected.includes(t) ? '✅' : '⬜️'} ${t === 'esc' ? '& < >' : t}`, callback_data: `dg:f:${t}`,
-    })));
-  }
-  rows.push([{ text: '💾 ذخیره', callback_data: 'dg:fs' }]);
-  return rows;
-}
-
+// A visual check only: the tags the bot uses are fixed (eitaa.js), so
+// nothing is stored from it.
 export async function runFmtDiag() {
   const m = await testMapping();
   if (!m) return say(NO_MAPPING);
@@ -252,35 +240,9 @@ export async function runFmtDiag() {
   for (const text of FMT_MESSAGES) {
     out.push(line(text.slice(0, 2), await eitaaCallOnce(m.token, 'sendMessage', { chat_id: m.chat, title: 'tg-diag-fmt', text, parse_mode: 'html' })));
   }
-  await setSetting('fmt_draft', []);
+  out.push('', 'ربات از این تگ‌ها استفاده می‌کند: b, i, code, a (بقیه به متن ساده تبدیل می‌شوند).');
   await say(out.join('\n'));
-  await api.sendMessage({
-    chat_id: OWNER_TELEGRAM_ID,
-    text: 'در ایتا نگاه کنید و هر تگی را که درست نمایش داده شد (قالب‌بندی شد، نه به‌صورت متن خام) انتخاب کنید؛ «& < >» یعنی این سه علامت درست دیده شدند (نه &amp;). بعد «ذخیره» را بزنید.',
-    reply_markup: { inline_keyboard: fmtKeyboard([]) },
-  }).catch(() => null);
   return null;
-}
-
-// The owner's answer: dg:f:<tag> toggles, dg:fs saves.
-export async function onFmtButton(cq) {
-  const draft = await getSetting('fmt_draft', []);
-  if (cq.data === 'dg:fs') {
-    const tags = draft.filter((t) => t !== 'esc');
-    await updateCaps({ tags, escapesOk: draft.includes('esc') });
-    await api.editMessageText({
-      chat_id: cq.message.chat.id, message_id: cq.message.message_id,
-      text: `💾 ذخیره شد. تگ‌های قابل استفاده: ${tags.join(', ') || 'هیچ'} · علامت‌ها: ${draft.includes('esc') ? 'درست' : 'خراب'}`,
-    }).catch(() => null);
-    return;
-  }
-  const tag = cq.data.slice(5);
-  if (!FMT_TAGS.includes(tag)) return;
-  const next = draft.includes(tag) ? draft.filter((t) => t !== tag) : [...draft, tag];
-  await setSetting('fmt_draft', next);
-  await api.editMessageReplyMarkup({
-    chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: fmtKeyboard(next) },
-  }).catch(() => null);
 }
 
 // ── /eitaa_diag methods ─────────────────────────────────────────────────────

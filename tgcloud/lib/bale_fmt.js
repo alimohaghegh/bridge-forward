@@ -1,12 +1,12 @@
 // Which Markdown Bale really renders, as answered by the bot owner in
 // /bale_diag fmt (stored under the settings key 'bale_fmt'), and the
-// diagnostic itself. Until answered, format.js formats links only.
+// diagnostic itself. Unanswered, format.js uses bold *, italic _ and links.
 
 import { api, InputFile } from 'sdk';
 import { baleCall } from './bale.js';
 import { getSetting, setSetting } from './eitaa.js';
 import { diagPngBytes } from './eitaa_diag.js';
-import { setBaleFormat } from './format.js';
+import { setBaleFormat, baleFormat } from './format.js';
 import { getUser } from './store.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 
@@ -25,12 +25,9 @@ export async function loadBaleFormat() {
   }
 }
 
-const ZW = '​';
 const URL = 'https://bale.ai';
 
-// [key, probe text, button label]. Probes 1–8 and 11: "did it render as
-// formatting?"; 9–10: "did the characters show literally (no formatting,
-// no visible backslash)?".
+// [key, probe text, button label]: "did it render as formatting?".
 const PROBES = [
   ['b1', '1) *a*', '1 بولد'],
   ['b2', '2) **a**', '2 بولد'],
@@ -40,9 +37,7 @@ const PROBES = [
   ['glued', '6) سلام*a*سلام', '6 چسبیده'],
   ['zwnj', '7) می‌*a*‌شود', '7 نیم‌فاصله'],
   ['link', `8) [متن لینک](${URL})`, '8 لینک'],
-  ['esc_bs', `9) \\*a\\* \\_a\\_ \\[a](${URL})`, '9 \\ درست'],
-  ['esc_zw', `10) *${ZW}a*${ZW} _${ZW}a_${ZW} [${ZW}a]${ZW}(${URL})`, '10 ZWSP درست'],
-  ['cap', `11) *a* _b_ [c](${URL})`, '11 کپشن'],
+  ['cap', `9) *a* _b_ [c](${URL})`, '9 کپشن'],
 ];
 
 function keyboard(selected) {
@@ -69,20 +64,32 @@ export async function runBaleFmtDiag(chatId) {
       : await baleCall('sendMessage', { chat_id: owner.baleChatId, text });
     results.push(`${text.slice(0, 3)} ${r.ok ? '✅' : '❌ ' + (r.error_code || '') + ' ' + String(r.description || '').slice(0, 60)}`);
   }
-  await setSetting('bale_fmt_draft', []);
+  // Start from what is in use now, so saving without changes keeps it.
+  const draft = answersFromFormat(baleFormat());
+  await setSetting('bale_fmt_draft', draft);
   await api.sendMessage({
     chat_id: chatId,
     text: [
-      '🔤 آزمایش قالب‌بندی بله — ۱۱ پیام به بلهٔ خودتان فرستاده شد:',
+      `🔤 آزمایش قالب‌بندی بله — ${PROBES.length} پیام به بلهٔ خودتان فرستاده شد:`,
       results.join('\n'),
       '',
-      'در بله نگاه کنید و دکمه‌ها را بزنید:',
-      '• ۱ تا ۸ و ۱۱: اگر واقعاً بولد/ایتالیک/لینک شد (نه به‌صورت علامت خام).',
-      '• ۹ و ۱۰: اگر علامت‌ها ساده و بدون قالب‌بندی دیده شدند (و در ۹ بک‌اسلش دیده نشد).',
-      'بعد «ذخیره» را بزنید.',
+      'در بله نگاه کنید: هر شماره‌ای که واقعاً بولد/ایتالیک/لینک شد (نه به‌صورت علامت خام) باید ✅ باشد.',
+      'تیک‌ها از تنظیمات فعلی شروع می‌شوند؛ فقط موارد اشتباه را عوض کنید و «ذخیره» را بزنید.',
     ].join('\n'),
-    reply_markup: { inline_keyboard: keyboard([]) },
+    reply_markup: { inline_keyboard: keyboard(draft) },
   }).catch(() => null);
+}
+
+// The answers that describe format `f` (the starting ticks).
+export function answersFromFormat(f) {
+  const a = [];
+  if (f.bold === '*') a.push('b1');
+  if (f.bold === '**') a.push('b2');
+  if (f.italic === '_') a.push('i1');
+  if (f.italic === '__') a.push('i2');
+  for (const k of ['punct', 'glued', 'zwnj', 'link']) if (f[k]) a.push(k);
+  if (f.caption) a.push('cap');
+  return a;
 }
 
 // What the answers mean for format.js.
@@ -96,7 +103,6 @@ export function formatFromAnswers(a) {
     punct: has('punct'),
     glued: has('glued'),
     zwnj: has('zwnj'),
-    escape: has('esc_zw') || !has('esc_bs') ? 'zwsp' : 'backslash',
     caption: has('cap'),
   };
 }
@@ -115,7 +121,7 @@ export async function onBaleFmtButton(cq) {
         '💾 ذخیره شد. از این به بعد در بله:',
         `بولد: ${fmt.bold || 'خاموش'} · ایتالیک: ${fmt.italic || 'خاموش'} · لینک: ${yes(fmt.link)}`,
         `کنار علامت‌ها: ${yes(fmt.punct)} · چسبیده به حروف: ${yes(fmt.glued)} · نیم‌فاصله: ${yes(fmt.zwnj)}`,
-        `خنثی‌کردن علامت‌های کاربر: ${fmt.escape === 'zwsp' ? 'فاصلهٔ صفر' : 'بک‌اسلش'} · قالب در کپشن: ${yes(fmt.caption)}`,
+        `قالب در کپشن: ${yes(fmt.caption)}`,
       ].join('\n'),
     }).catch(() => null);
     return;

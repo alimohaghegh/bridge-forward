@@ -179,9 +179,11 @@ The platform manages the bot's webhook for you, derived from your deployed
 - Formatting: `lib/entities.js` is the shared entity core (UTF-16, nesting,
   chunking). Eitaa (`eitaa_html.js`) emits only b/i/code/a (verified live);
   Bale (`format.js`) has no parse_mode — everything is Markdown — so links
-  are `[text](url)`, bold/italic only per the owner's `/bale_diag fmt`
-  answers (settings key `bale_fmt`, loaded by `loadBaleFormat()` at the
-  start of each handler), and typed markers are escaped (ZWSP by default).
+  are `[text](url)`, bold `*` and italic `_` (Bale's spacing rule applies),
+  adjustable by the owner's `/bale_diag fmt` (settings key `bale_fmt`,
+  loaded by `loadBaleFormat()` at the start of each handler; the diagnostic
+  starts from the current format). Eitaa's tag set is fixed in code: a
+  stored "nothing ticked" answer once switched all formatting off.
 - `npm test` (node:test, `tests/`, SDK stubbed by `tests/register.mjs`)
   runs in the deploy workflow before anything is pushed.
 - `/start` shows one main menu (`lib/eitaa_link.js` showMenu); its first

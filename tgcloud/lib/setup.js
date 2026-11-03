@@ -193,7 +193,7 @@ async function selfTest() {
       && ((await consumeCode(ch.code, { channel: true })) || {}).tgChannelId === -1001;
 
     const plan = planMessage({ message_id: 7, text: 'x'.repeat(4500), entities: [{ type: 'bold', offset: 0, length: 3 }] });
-    checks.planText = plan.ops.length === 2 && plan.ops[0].text.startsWith('xxx') && plan.layout[7] === 'text';
+    checks.planText = plan.ops.length === 2 && plan.ops[0].text.startsWith('*xxx*') && plan.layout[7] === 'text';
     const photo = (id) => ({ message_id: id, photo: [{ file_id: 'f' + id, file_unique_id: 'u' + id }] });
     const ap = planAlbum([{ tg: 9, spec: planMessage(photo(9)).ops[0].spec, caption: '' },
       { tg: 8, spec: planMessage(photo(8)).ops[0].spec, caption: 'c' }]);
@@ -208,9 +208,9 @@ async function selfTest() {
     await clearLink(fake);
     checks.clearLink = (await getUser(fake)).baleChatId === null;
 
-    // Default Bale formatting (before /bale_diag fmt): links only, typed markers stay literal.
+    // Default Bale formatting: bold *, italic _, links.
     checks.baleLink = toBaleMarkdown('see this', [{ type: 'text_link', offset: 4, length: 4, url: 'https://a.b/c' }]) === 'see [this](https://a.b/c)';
-    checks.baleLiteral = toBaleMarkdown('*x*', []) === '*\u200Bx*\u200B';
+    checks.baleBoldItalic = toBaleMarkdown('a b c', [{ type: 'bold', offset: 0, length: 1 }, { type: 'italic', offset: 4, length: 1 }]) === '*a* b _c_';
     const parts = splitText('a'.repeat(9000), 4000);
     checks.splitText = parts.length === 3 && parts.join('') === 'a'.repeat(9000);
 

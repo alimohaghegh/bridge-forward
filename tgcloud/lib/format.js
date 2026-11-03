@@ -1,28 +1,23 @@
 // Telegram text + entities → Bale text. Bale has no parse_mode: every text
-// it receives is rendered as Markdown. Documented (docs.bale.ai): bold
-// between asterisks, italic between underscores, each needing a space before
-// the opening and after the closing marker; links as [text](url).
-// Undocumented details (single or double markers, punctuation, captions,
-// how to show a literal marker) come from the owner's /bale_diag fmt answers;
-// until then only links are formatted and everything else is plain.
-//
-// Because Bale parses everything, characters the user typed (*x*, _x_,
-// [a](b), `x`) are escaped so they stay literal: by default a zero-width
-// space (U+200B) after each marker character, or a backslash if the
-// diagnostic showed that works. Auto-detected entities (urls, mentions…) are
-// left untouched so they stay clickable.
+// it receives is rendered as Markdown. Documented (docs.bale.ai) and seen
+// live: bold between single asterisks, italic between underscores, each
+// needing a space (or line start/end) before the opening and after the
+// closing marker; links as [text](url). Other Telegram formats (underline,
+// strikethrough, code, quote, spoiler) have no Bale form and go out plain.
+// The owner's /bale_diag fmt answers can change the markers or allow
+// punctuation next to them. Markers the user typed themselves are left as
+// they are: Bale may format them, which is fine.
 
 import { AUTO_TYPES, normalizeEntities, trimSpan, chunkRanges } from './entities.js';
 
 export const DEFAULT_BALE_FORMAT = {
   answered: false,
-  bold: null, // '*' | '**' | null
-  italic: null, // '_' | '__' | null
+  bold: '*', // '*' | '**' | null
+  italic: '_', // '_' | '__' | null
   link: true,
   punct: false, // markers work next to punctuation
   glued: false, // markers work glued to letters
   zwnj: false, // markers work next to a ZWNJ (نیم‌فاصله)
-  escape: 'zwsp', // 'zwsp' | 'backslash'
   caption: true, // captions are parsed like texts
 };
 
@@ -36,12 +31,6 @@ export function baleFormat() {
   return current;
 }
 
-const SPECIAL = /[*_[\]`~]/g;
-
-function escapeLiteral(s, method) {
-  return method === 'backslash' ? s.replace(SPECIAL, '\\$&') : s.replace(SPECIAL, '$&​');
-}
-
 function safeUrl(url) {
   if (typeof url !== 'string' || !/^https?:\/\/\S+$/i.test(url)) return null;
   return url.replace(/\(/g, '%28').replace(/\)/g, '%29');
@@ -49,16 +38,12 @@ function safeUrl(url) {
 
 // Picks the spans that can be written as Bale Markdown (Markdown can't nest
 // or overlap them): links first (the URL is information), then bold, then
-// italic. Returns { spans, protect, issues }.
+// italic. Returns { spans, issues }.
 function baleSpans(text, entities, fmt) {
   const issues = new Set();
-  const protect = [];
   const candidates = [];
   for (const s of normalizeEntities(text, entities)) {
-    if (AUTO_TYPES.has(s.type)) {
-      protect.push(s);
-      continue;
-    }
+    if (AUTO_TYPES.has(s.type)) continue;
     if (s.type === 'text_link' && fmt.link && safeUrl(s.url)) candidates.push({ ...s, prio: 0, href: safeUrl(s.url) });
     else if (s.type === 'bold' && fmt.bold) candidates.push({ ...s, prio: 1, marker: fmt.bold });
     else if (s.type === 'italic' && fmt.italic) candidates.push({ ...s, prio: 2, marker: fmt.italic });
@@ -84,27 +69,12 @@ function baleSpans(text, entities, fmt) {
     chosen.push(c);
   }
   chosen.sort((a, b) => a.start - b.start);
-  return { spans: chosen, protect, issues };
-}
-
-// text[a, b) as literal Bale text: escaped, except inside protected ranges.
-function literal(text, a, b, protect, method) {
-  let out = '';
-  let pos = a;
-  for (const p of protect) {
-    if (p.end <= pos || p.start >= b) continue;
-    const ps = Math.max(p.start, pos);
-    out += escapeLiteral(text.slice(pos, ps), method);
-    const pe = Math.min(p.end, b);
-    out += text.slice(ps, pe);
-    pos = pe;
-  }
-  return out + escapeLiteral(text.slice(pos, b), method);
+  return { spans: chosen, issues };
 }
 
 function renderRange(text, sel, from, to, withFormat) {
-  const { spans, protect } = sel;
-  const method = current.escape;
+  const { spans } = sel;
+  const literal = (a, b) => text.slice(a, b);
   let out = '';
   let pos = from;
   if (withFormat) {
@@ -112,13 +82,13 @@ function renderRange(text, sel, from, to, withFormat) {
       if (s0.end <= from || s0.start >= to) continue;
       const s = trimSpan(text, { ...s0, start: Math.max(s0.start, from), end: Math.min(s0.end, to) });
       if (!s) continue;
-      out += literal(text, pos, s.start, protect, method);
-      const inner = literal(text, s.start, s.end, protect, method);
+      out += literal(pos, s.start);
+      const inner = literal(s.start, s.end);
       out += s.href ? `[${inner}](${s.href})` : s.marker + inner + s.marker;
       pos = s.end;
     }
   }
-  return out + literal(text, pos, to, protect, method);
+  return out + literal(pos, to);
 }
 
 // Text (or caption, with { caption: true }) → chunks of at most `max`
