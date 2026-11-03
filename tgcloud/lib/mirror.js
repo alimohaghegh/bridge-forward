@@ -64,10 +64,15 @@ async function markQueued(tgChannelId, tgMessageIds) {
 }
 
 // Returns false when the post can't be mirrored at all (sticker, poll…).
+// The post is claimed first, in one statement: when Telegram delivers the
+// same update twice at once (seen with bursts of posts), "check, then
+// record" let both runs queue it and Bale got it twice.
 export async function enqueuePost(tgChannelId, m) {
+  const claimed = await db.run(sql`
+    INSERT OR IGNORE INTO delivered (chat_id, message_id, created_at) VALUES (${tgChannelId}, ${m.message_id}, ${now()})`);
+  if (!claimed.rowsAffected) return true; // the other delivery has it
   const plan = planMessage(m);
   if (plan) await insertJob(tgChannelId, m.message_id, 'post', { plan });
-  await markQueued(tgChannelId, [m.message_id]);
   return Boolean(plan);
 }
 
@@ -417,14 +422,16 @@ export async function drain(tgChannelId, { deadline, probe, forceProbe } = {}) {
 }
 
 // Scheduled run / owner /sync: every linked channel, queue and deletions.
+// The scheduled run's budget: room for a burst of deletions (a Bale delete
+// takes ~0.3-0.6 s) while staying well under the ~30 s run limit.
 export async function drainAll(budgetMs) {
-  const end = Date.now() + (budgetMs || 18000);
+  const end = Date.now() + (budgetMs || 20000);
   const out = {};
   const list = rowsOf(await db.all(sql`SELECT tg_channel_id FROM channels`));
   for (const row of list) {
     if (Date.now() > end) break;
     const id = Number(row.tg_channel_id);
-    const r = await drain(id, { deadline: Math.min(end, Date.now() + 8000), probe: true, forceProbe: true });
+    const r = await drain(id, { deadline: Math.min(end, Date.now() + 14000), probe: true, forceProbe: true });
     out[id] = r.status;
   }
   await db.run(sql`DELETE FROM mirrored WHERE created_at < ${now() - MIRROR_RETENTION_SECONDS}`);
