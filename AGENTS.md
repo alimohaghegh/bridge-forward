@@ -165,7 +165,8 @@ The platform manages the bot's webhook for you, derived from your deployed
 - **Deploy only via GitHub Actions** (`.github/workflows/deploy.yml`): a local
   `npx tgcloud push` without `config.js` would deploy a broken bot.
 - Channels: «پل کانال به کانال (به بله)» (or `/channel`) links a Telegram channel to a Bale channel or group
-  (`lib/channels.js`; a code posted in the Bale chat proves access).
+  (`lib/channels.js`; the Bale chat is named by @id, a post of it forwarded to
+  the Bale bot, or a code posted in a group — nothing is posted in a channel).
   Posts, edits and deletions go through a durable ordered queue
   (`lib/mirror.js`, table `outbox`) that keeps each job until Bale accepts it;
   `.github/workflows/drain.yml` re-runs it every 5 min (`__drain`, Bale and

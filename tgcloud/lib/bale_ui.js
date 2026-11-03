@@ -3,13 +3,14 @@
 //    test message, unlinking);
 //  - «پل کانال به کانال (به بله)»: Telegram channel → Bale channel/group in
 //    two steps (the Telegram channel — found automatically when the bot is
-//    made admin, or from a forwarded post — then a code posted in Bale).
+//    made admin, or from a forwarded post — then the Bale chat: its @id, a
+//    post of it forwarded to the Bale bot, or a code posted in a group).
 
 import { api } from 'sdk';
 import { baleCall, classifyError, isSystemError } from './bale.js';
 import {
   listChannels, telegramChannelTitle, setPending, clearPending, checkTelegramChannel, telegramChannelRef,
-  baleChannelRef, checkBaleChannel, confirmBaleTarget, saveChannel,
+  baleChannelRef, checkBaleChannel, saveChannel,
 } from './channels.js';
 import { createCode, getOrCreateCode, deletePendingCodes, createChannelCode } from './linking.js';
 import { getUser, clearLink, isOwner, recordBaleSuccess, recordBaleFailure } from './store.js';
@@ -166,15 +167,10 @@ export async function handleBaleStep(step, message, user) {
       await show(where, bale.text, [CANCEL_ROW]);
       return true;
     }
-    const confirm = await confirmBaleTarget(bale.id);
-    if (!confirm.ok) {
-      await show(where, confirm.text, [CANCEL_ROW]);
-      return true;
-    }
     await saveChannel(tg.id, bale.id, tgId);
     await clearPending(tgId);
     await deletePendingCodes(tgId);
-    await show(where, T.chLinked(tg.title, bale.title) + (confirm.canDelete ? '' : '\n\n' + T.chCantDelete), linkedButtons());
+    await show(where, T.chLinked(tg.title, bale.title) + (bale.canDelete ? '' : '\n\n' + T.chCantDelete), linkedButtons());
     return true;
   }
   return false;

@@ -1,8 +1,10 @@
 // Telegram channel → Bale channel mirrors: setup checks and storage.
 //
-// Setup («پل کانال به کانال (به بله)», or /channel) is two steps in the private chat: the user names their
-// Telegram channel (forwarded post, @username or id), then their Bale
-// channel (@username, ble.ir link or id). The bot must be admin in both, and
+// Setup («پل کانال به کانال (به بله)», or /channel) is two steps in the
+// private chat: the user names their Telegram channel (the bot was made
+// admin, a forwarded post, @username or id), then their Bale chat — its
+// @username (public), a post of it forwarded to the Bale bot (private
+// channel), or a code posted in it (group). Nothing else is posted there. The bot must be admin in both, and
 // the user must be admin of both (on Bale, via their linked Bale account).
 
 import { api, db, BotApiError } from 'sdk';
@@ -157,25 +159,17 @@ export async function checkBaleChannel(ref, userBaleId, skipUserCheck) {
     return { ok: false, text: T.chBaleUserNotAdmin };
   }
   if (info.type && info.type !== 'channel' && info.type !== 'group') return { ok: false, text: T.chBaleNotChannel };
-  return { ok: true, id: info.id, title: info.title || String(info.id) };
+  // Rights come from the admin list only: nothing is posted in the chat to
+  // test them (it may be a public channel).
+  const bot = me.ok && me.result ? list.find((a) => a.user && a.user.id === me.result.id) : null;
+  return { ok: true, id: info.id, title: info.title || String(info.id), canDelete: !(bot && bot.can_delete_messages === false) };
 }
 
-// Proves the bot can post in a Bale chat (and delete, which mirroring
-// deletions needs) by sending a short notice and removing it.
-// Returns { ok: true, canDelete } or { ok: false, text }.
-export async function confirmBaleTarget(baleChatId) {
-  const r = await baleCall('sendMessage', { chat_id: baleChatId, text: T.baleTargetTest });
-  if (!r.ok) {
-    const reason = classifyError(r);
-    return { ok: false, text: reason === 'unavailable' ? T.chBaleDown : T.chBaleBotCantPost };
-  }
-  const d = await baleCall('deleteMessage', { chat_id: baleChatId, message_id: r.result.message_id });
-  return { ok: true, canDelete: d.ok === true };
-}
-
-// Finishes linking after a channel code showed up in a Bale channel/group.
-// `target`: { chatId, type, title, posterId?, codeMessageId? }. Tells the
-// user the outcome in Telegram. Returns { ok }.
+// Finishes linking once the Bale chat is known: from a post of it forwarded
+// to the Bale bot (`userBaleId` set: that user must be its admin), or from a
+// code posted in it. `target`: { chatId, type, title, userBaleId?,
+// posterId?, codeMessageId? }. Tells the user the outcome in Telegram.
+// Returns { ok }.
 export async function linkBaleTarget(tgId, tgChannelId, target) {
   const tell = (text, keyboard) => api.sendMessage({
     chat_id: tgId, text, parse_mode: 'HTML', ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),
@@ -200,19 +194,19 @@ export async function linkBaleTarget(tgId, tgChannelId, target) {
     }
   }
 
-  const confirm = await confirmBaleTarget(target.chatId);
-  if (!confirm.ok) {
-    await tell(confirm.text);
+  const bale = await checkBaleChannel(target.chatId, target.userBaleId, !target.userBaleId);
+  if (!bale.ok) {
+    await tell(bale.text);
     return { ok: false };
   }
 
-  await saveChannel(tg.id, target.chatId, tgId);
+  await saveChannel(tg.id, bale.id, tgId);
   await clearPending(tgId);
   if (target.codeMessageId) {
     await baleCall('deleteMessage', { chat_id: target.chatId, message_id: target.codeMessageId });
   }
-  const title = target.title || (target.type === 'group' ? 'گروه بله' : 'کانال بله');
-  await tell(T.chLinked(tg.title, title) + (confirm.canDelete ? '' : '\n\n' + T.chCantDelete), [
+  const title = bale.title || target.title || (target.type === 'group' ? 'گروه بله' : 'کانال بله');
+  await tell(T.chLinked(tg.title, title) + (bale.canDelete ? '' : '\n\n' + T.chCantDelete), [
     [{ text: MENU.baleChannels, callback_data: 'm:bch' }], [{ text: MENU.home, callback_data: 'm:home' }],
   ]);
   return { ok: true };

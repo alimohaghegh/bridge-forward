@@ -149,7 +149,7 @@ async function handleChannelCode(code, target, sink) {
   return true;
 }
 
-async function handleBaleMessage(msg, sink) {
+export async function handleBaleMessage(msg, sink) {
   if (!msg || !msg.chat) return;
   const chatId = msg.chat.id;
   const text = typeof msg.text === 'string' ? msg.text : (typeof msg.caption === 'string' ? msg.caption : '');
@@ -167,8 +167,26 @@ async function handleBaleMessage(msg, sink) {
   }
   if (msg.chat.type !== 'private') return;
 
-  // A channel post with a code, forwarded to the bot: link that channel.
+  // A post of a Bale channel forwarded to the bot while its user is at
+  // step 2: link that channel — nothing has to be posted in it.
   const fwd = msg.forward_from_chat;
+  if (!code && fwd && (fwd.type === 'channel' || fwd.type === 'group')) {
+    const u = await db.get(sql`
+      SELECT tg_id, pending_tg_channel FROM users
+      WHERE bale_chat_id = ${chatId} AND pending_step = 'bale_channel' AND pending_until > ${now()} LIMIT 1`);
+    if (u) {
+      const tgId = Number(u.tg_id);
+      const result = await linkBaleTarget(tgId, Number(u.pending_tg_channel), {
+        chatId: fwd.id, type: fwd.type, title: fwd.title, userBaleId: chatId,
+      });
+      sink.channelLinked.add(tgId);
+      if (!result.ok) sink.channelFailed.add(tgId);
+      await baleReply(chatId, T.baleChannelLinkedHere);
+      return;
+    }
+  }
+
+  // A channel post with a code, forwarded to the bot: link that channel.
   if (code && fwd && (fwd.type === 'channel' || fwd.type === 'group')) {
     const handled = await handleChannelCode(code, {
       chatId: fwd.id, type: fwd.type, title: fwd.title,
