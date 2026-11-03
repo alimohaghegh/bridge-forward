@@ -3,7 +3,8 @@
 // the user's Bale chat. Screens and buttons live in lib/ (bale_ui.js,
 // eitaa_link.js). Message contents are never stored or logged.
 
-import { api } from 'sdk';
+import { api, db } from 'sdk';
+import { sql } from 'sdk/db';
 import { safeErrorText, isSystemError } from '../lib/bale.js';
 import { isSupported, deliver, deliverAlbum } from '../lib/forward.js';
 import { isAlbumItem, collectAlbum, releaseAlbumItems } from '../lib/album.js';
@@ -188,7 +189,9 @@ const CI_RUNS = {
     const [baleById, eitaa] = await Promise.all([drainAll(), drainEitaa(10000)]);
     const bale = {};
     for (const status of Object.values(baleById)) bale[status] = (bale[status] || 0) + 1;
-    return { bale, baleProbe: { ...probeStats }, eitaa };
+    // This machine's clock minus the database's (clocks were seen to differ).
+    const db0 = await db.get(sql`SELECT CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) AS ms`);
+    return { bale, baleProbe: { ...probeStats }, eitaa, skewMs: Date.now() - Number(db0.ms) };
   },
 };
 
