@@ -41,9 +41,18 @@ const PROBE_BATCH = 25;
 const PROBE_GRACE_MS = 3000;
 const MIRROR_RETENTION_SECONDS = 30 * 24 * 3600;
 
+// Burst test only (fake channel -42): records claim/queue/lock/send events.
+const BURST = -42;
+const RUN_ID = Math.random().toString(36).slice(2, 8);
+async function dbg(channel, kind, key) {
+  if (channel !== BURST) return;
+  await db.run(sql`INSERT INTO debug_events (at_ms, kind, key, run_id) VALUES (${Date.now()}, ${kind}, ${key}, ${RUN_ID})`).catch(() => null);
+}
+
 // ── Enqueueing ──────────────────────────────────────────────────────────────
 
 async function insertJob(tgChannelId, sortKey, kind, payload) {
+  await dbg(tgChannelId, 'job', sortKey);
   await db.run(sql`
     INSERT INTO outbox (tg_channel_id, sort_key, kind, payload, created_at)
     VALUES (${tgChannelId}, ${sortKey}, ${kind}, ${payload === null ? null : JSON.stringify(payload)}, ${now()})`);
@@ -71,6 +80,7 @@ export async function enqueuePost(tgChannelId, m) {
   const claimed = await db.run(sql`
     INSERT OR IGNORE INTO delivered (chat_id, message_id, created_at) VALUES (${tgChannelId}, ${m.message_id}, ${now()})`);
   if (!claimed.rowsAffected) return true; // the other delivery has it
+  await dbg(tgChannelId, 'claim', m.message_id);
   const plan = planMessage(m);
   if (plan) await insertJob(tgChannelId, m.message_id, 'post', { plan });
   return Boolean(plan);
@@ -273,10 +283,12 @@ async function acquire(tgChannelId) {
   const r = await db.run(sql`
     UPDATE channels SET lock_until = ${t + LOCK_SECONDS}
     WHERE tg_channel_id = ${tgChannelId} AND lock_until < ${t}`);
+  if (r.rowsAffected > 0) await dbg(tgChannelId, 'acquire', 0);
   return r.rowsAffected > 0;
 }
 
 async function release(tgChannelId) {
+  await dbg(tgChannelId, 'release', 0);
   await db.run(sql`UPDATE channels SET lock_until = 0 WHERE tg_channel_id = ${tgChannelId}`);
 }
 
@@ -301,6 +313,7 @@ async function drainLocked(link, deadline) {
     }
 
     let r;
+    await dbg(link.tgChannelId, 'send', job.id);
     try {
       r = await runJob(link, job, deadline);
     } catch (e) {

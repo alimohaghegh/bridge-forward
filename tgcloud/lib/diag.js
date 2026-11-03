@@ -241,6 +241,29 @@ export async function runBurstReport() {
     FROM bale_calls WHERE method = 'sendMessage' AND chat_id = ${owner.baleChatId} AND at_ms >= ${st.atMs}`);
   const errors = (await getSetting('errors', [])).filter((e) => e.at * 1000 >= st.atMs - 1000)
     .map((e) => `${e.where}: ${e.name} ${e.msg}`.slice(0, 120));
+  // What happened, from the debug events.
+  const ev = await db.all(sql`SELECT * FROM debug_events WHERE at_ms >= ${st.atMs} ORDER BY id`);
+  const multi = (kind) => {
+    const n = new Map();
+    for (const e of ev) if (e.kind === kind) n.set(e.key, (n.get(e.key) || 0) + 1);
+    return [...n.values()].filter((v) => v > 1).length;
+  };
+  // Overlapping lock holders: an acquire while another run's acquire has no release yet.
+  let held = new Map();
+  let overlaps = 0;
+  for (const e of ev) {
+    if (e.kind === 'acquire') {
+      if ([...held.keys()].some((r) => r !== e.run_id)) overlaps++;
+      held.set(e.run_id, true);
+    } else if (e.kind === 'release') held.delete(e.run_id);
+  }
+  const debug = {
+    events: ev.length, claims: ev.filter((e) => e.kind === 'claim').length, claimedTwice: multi('claim'),
+    jobs: ev.filter((e) => e.kind === 'job').length, queuedTwice: multi('job'),
+    sends: ev.filter((e) => e.kind === 'send').length, jobSentTwice: multi('send'),
+    acquires: ev.filter((e) => e.kind === 'acquire').length, lockOverlaps: overlaps,
+  };
+  await db.run(sql`DELETE FROM debug_events`);
   const deleted = await cleanupBurst(owner.baleChatId, st.atMs);
-  return { ok: true, claimed, queuedLeft: left, mirrored, sent: sends, duplicates: (sends.ok || 0) - mirrored, errors, deletedAfter: deleted };
+  return { ok: true, claimed, queuedLeft: left, mirrored, sent: sends, duplicates: (sends.ok || 0) - mirrored, errors, debug, deletedAfter: deleted };
 }

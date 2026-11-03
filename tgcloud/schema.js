@@ -245,3 +245,13 @@ export const baleCalls = table('bale_calls', {
   chatId:  integer('chat_id'),
   resultId: integer('result_id'),                     // message id Bale returned
 });
+
+// Burst test only (fake channel -42): who claimed, queued, locked and sent
+// what, to find how a post reached Bale twice. Deleted by the test.
+export const debugEvents = table('debug_events', {
+  id:    integer('id').primaryKey({ autoIncrement: true }),
+  atMs:  integer('at_ms').notNull(),
+  kind:  text('kind').notNull(),                       // claim | job | acquire | release | send
+  key:   integer('key'),
+  runId: text('run_id'),
+});
