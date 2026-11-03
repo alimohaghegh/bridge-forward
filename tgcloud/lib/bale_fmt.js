@@ -54,7 +54,7 @@ function keyboard(selected) {
 export async function runBaleFmtDiag(chatId) {
   const owner = await getUser(OWNER_TELEGRAM_ID);
   if (!owner || !owner.baleChatId) {
-    await api.sendMessage({ chat_id: chatId, text: 'ℹ️ اول حساب بلهٔ خودتان را وصل کنید (ارسال پیام به بله)، بعد دوباره /bale_diag fmt بزنید.' }).catch(() => null);
+    await api.sendMessage({ chat_id: chatId, text: 'ℹ️ اول حساب بلهٔ خودتان را وصل کنید (پل بات به بات)، بعد دوباره /bale_diag fmt بزنید.' }).catch(() => null);
     return;
   }
   const results = [];

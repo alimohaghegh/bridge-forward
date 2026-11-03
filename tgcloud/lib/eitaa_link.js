@@ -14,7 +14,7 @@
 import { api, db } from 'sdk';
 import { eq, sql } from 'sdk/db';
 import { users } from '../schema.js';
-import { checkTelegramChannel, telegramChannelRef, listChannels, telegramChannelTitle } from './channels.js';
+import { checkTelegramChannel, telegramChannelRef, listChannels, telegramChannelTitle, setPending } from './channels.js';
 import {
   SHARED_TOKEN, OPERATOR_USERNAME, simpleModeEnabled, advancedModeEnabled, webCryptoAvailable,
   eitaaCall, classifyEitaa, describeFailure, encryptToken, eitaaReachable,
@@ -22,7 +22,7 @@ import {
 import {
   getEitaaChannel, channelInfo, processQueue, retryChannel, sweepDeletions, queuedCount, recentPosts,
 } from './eitaa_mirror.js';
-import { isOwner } from './store.js';
+import { isOwner, getUser } from './store.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { E, MENU, T } from './texts.js';
 import { now, rowsOf, toAsciiDigits } from './util.js';
@@ -56,8 +56,8 @@ async function pendingRequestCount() {
 export async function showMenu(where, tgId) {
   const keyboard = [
     [{ text: MENU.bale, callback_data: 'm:bale' }],
-    [{ text: MENU.eitaa, callback_data: 'e:new' }],
-    [{ text: MENU.mine, callback_data: 'e:list' }],
+    [{ text: MENU.baleChannels, callback_data: 'm:bch' }],
+    [{ text: MENU.eitaa, callback_data: 'e:list' }],
     [{ text: MENU.help, callback_data: 'm:help' }],
   ];
   if (isOwner(tgId)) {
@@ -119,7 +119,7 @@ export async function pickChannel(where, tgId, ref) {
   const existing = await getEitaaChannel(tg.id);
   if (existing && existing.ownerTgId === tgId && existing.status !== 'draft') {
     await clearStep(tgId);
-    await show(where, E.alreadyLinked(tg.title), [[{ text: MENU.mine, callback_data: 'e:list' }], homeRow]);
+    await show(where, E.alreadyLinked(tg.title), [[{ text: MENU.eitaa, callback_data: 'e:list' }], homeRow]);
     return false;
   }
   if (existing && existing.ownerTgId !== tgId && existing.status !== 'draft') {
@@ -258,7 +258,7 @@ async function handleSimpleLink(message, user) {
   await db.run(sql`UPDATE eitaa_channels SET status = 'pending', mode = 'simple' WHERE tg_channel_id = ${tgChannelId}`);
   await clearStep(tgId);
   await sendRequestToOwner({ id, tgChannelId, requesterId: tgId, eitaaRef: ref }, displayName(message.from));
-  return show({ chatId: tgId }, E.requestSaved, [[{ text: MENU.mine, callback_data: 'e:list' }], homeRow]);
+  return show({ chatId: tgId }, E.requestSaved, [[{ text: MENU.eitaa, callback_data: 'e:list' }], homeRow]);
 }
 
 // Pulls { token, chatId } out of the advanced-mode message.
@@ -312,7 +312,7 @@ async function handleToken(message, user) {
       token_enc = ${tokenEnc}, linked_at = ${now()}, stop_reason = NULL, alerted = 0
     WHERE tg_channel_id = ${tgChannelId}`);
   await clearStep(tgId);
-  return show({ chatId: tgId }, E.linkedAdvanced(info.title) + warn, [[{ text: MENU.mine, callback_data: 'e:list' }], homeRow]);
+  return show({ chatId: tgId }, E.linkedAdvanced(info.title) + warn, [[{ text: MENU.eitaa, callback_data: 'e:list' }], homeRow]);
 }
 
 // A message while an Eitaa step is pending. Returns true when consumed.
@@ -381,7 +381,7 @@ export async function handleOwnerReply(message) {
     WHERE tg_channel_id = ${ch.tgChannelId}`);
   await db.run(sql`UPDATE eitaa_requests SET status = 'approved', decided_at = ${t} WHERE id = ${req.id}`);
   await api.editMessageReplyMarkup({ chat_id: chatId, message_id: reply.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => null);
-  await show({ chatId: ch.ownerTgId }, E.linkedSimple(info.title), [[{ text: MENU.mine, callback_data: 'e:list' }]]);
+  await show({ chatId: ch.ownerTgId }, E.linkedSimple(info.title), [[{ text: MENU.eitaa, callback_data: 'e:list' }]]);
   await show({ chatId }, E.ownerApproved(req.id));
   return true;
 }
@@ -424,32 +424,42 @@ export async function listRequests(chatId) {
   return null;
 }
 
-// ── «کانال‌های من» ──────────────────────────────────────────────────────────
+// ── Channel lists («پل کانال به کانال») ──────────────────────────────────────────────────────────
 
 export async function showList(where, tgId) {
   const rows = rowsOf(await db.all(sql`SELECT * FROM eitaa_channels WHERE owner_tg_id = ${tgId} ORDER BY created_at`));
-  const bale = await listChannels(tgId);
   const keyboard = [];
   for (const r of rows) {
     const info = await channelInfo(Number(r.tg_channel_id));
     keyboard.push([{ text: `${E.status[r.status] || r.status} · ${info.title}`, callback_data: `e:ch:${r.tg_channel_id}` }]);
   }
-  if (bale.length) keyboard.push([{ text: E.baleChannels(bale.length), callback_data: 'm:bch' }]);
+  keyboard.push([{ text: MENU.addChannel, callback_data: 'e:new' }]);
   keyboard.push(homeRow);
   await show(where, rows.length ? E.listHeader : E.listEmpty, keyboard);
 }
 
-// The Bale channel list with its unlink buttons (same as /channels).
+// The Bale channel list with its unlink buttons (same as /channels) and a
+// button to link another one.
 export async function showBaleChannels(where, tgId) {
   const list = await listChannels(tgId);
-  if (!list.length) return show(where, T.chListEmpty, [homeRow]);
   const keyboard = [];
   for (const ch of list) {
     const title = await telegramChannelTitle(ch.tgChannelId);
     keyboard.push([{ text: T.chUnlinkButton(title), callback_data: `unch:${ch.tgChannelId}` }]);
   }
+  keyboard.push([{ text: MENU.addChannel, callback_data: 'm:bnew' }]);
   keyboard.push(homeRow);
-  return show(where, T.chListHeader, keyboard);
+  return show(where, list.length ? E.baleListHeader : E.baleListEmpty, keyboard);
+}
+
+// «➕ اتصال کانال جدید» for Bale: the /channel flow.
+export async function startBaleChannel(where, tgId) {
+  const user = await getUser(tgId);
+  if (!user || !user.baleChatId) {
+    return show(where, E.baleNeedAccount, [[{ text: MENU.bale, callback_data: 'm:bale' }], homeRow]);
+  }
+  await setPending(tgId, 'tg_channel');
+  return show(where, T.chStep1);
 }
 
 // The channel, if `tgId` may manage it (its owner, or the bot owner).
@@ -560,7 +570,7 @@ async function removeMirror(tgChannelId) {
 export async function unlink(where, tgId, tgChannelId) {
   if (!(await ownChannel(tgId, tgChannelId))) return show(where, E.notYours, [homeRow]);
   await removeMirror(tgChannelId);
-  return show(where, E.unlinked, [[{ text: MENU.mine, callback_data: 'e:list' }], homeRow]);
+  return show(where, E.unlinked, [[{ text: MENU.eitaa, callback_data: 'e:list' }], homeRow]);
 }
 
 // Counts for /stats (no ids).

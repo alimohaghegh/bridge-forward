@@ -91,6 +91,7 @@ async function menuButton(cq) {
     else if (action === 'help') await EL.showHelp(where);
     else if (action === 'bale') await runStartFlow(cq.message ? cq.message.chat.id : tgId, tgId);
     else if (action === 'bch') await EL.showBaleChannels(where, tgId);
+    else if (action === 'bnew') await EL.startBaleChannel(where, tgId);
     return true;
   }
   if (ns !== 'e') return false;
