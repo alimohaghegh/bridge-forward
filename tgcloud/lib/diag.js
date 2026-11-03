@@ -7,6 +7,7 @@ import { sql } from 'sdk/db';
 import { baleCall, baleCallOnce, safeErrorText } from './bale.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { getUser } from './store.js';
+import { getSetting } from './eitaa.js';
 import { enqueuePost, enqueueEdit, drain } from './mirror.js';
 import { saveChannel } from './channels.js';
 
@@ -145,5 +146,7 @@ export async function runBaleState() {
       newestSeenAboveMirrored: Boolean(tracked.top && last[0] && tracked.top > last[0].tg_message_id),
     });
   }
+  out.lastDeletes = await getSetting('bale_deletes', []);
+  out.now = t;
   return out;
 }

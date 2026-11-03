@@ -23,6 +23,7 @@ import {
 import { takeStaleAlbums, albumPending, releaseAlbumItems } from './album.js';
 import { getChannel, countChannelDelivery, telegramChannelTitle } from './channels.js';
 import { recordBaleSuccess, recordBaleFailure } from './store.js';
+import { getSetting, setSetting } from './eitaa.js';
 import { T } from './texts.js';
 import { now, rowsOf } from './util.js';
 
@@ -137,10 +138,30 @@ async function runSend(link, job, payload, deadline) {
   return { ok: true };
 }
 
+// The last few Bale delete answers (time, code, short text; no content),
+// for diagnosis (__bale_state): a refusal used to pass for "already gone".
+async function noteDelete(r) {
+  try {
+    const list = await getSetting('bale_deletes', []);
+    list.unshift({
+      at: now(), ok: r.ok === true, result: r.ok ? r.result : undefined, code: r.error_code,
+      desc: r.ok ? undefined : String(r.description || r.detail || '').slice(0, 80), via: r.via,
+    });
+    await setSetting('bale_deletes', list.slice(0, 5));
+  } catch {
+    // Diagnosis only.
+  }
+}
+
 async function deleteBale(chatId, baleId) {
   const r = await baleCall('deleteMessage', { chat_id: chatId, message_id: baleId });
-  // 400: already gone, or older than Bale's 48 h limit — nothing more to do.
-  if (r.ok || r.error_code === 400) return { ok: true };
+  await noteDelete(r);
+  if (r.ok && r.result !== false) return { ok: true };
+  // Already gone: nothing more to do.
+  if (!r.ok && r.error_code === 400 && /not found|message_id_invalid/i.test(String(r.description))) return { ok: true };
+  // Anything else (no right, too old for Bale's 48 h limit, …) is a real
+  // refusal: reported to the owner instead of silently counted as done.
+  if (r.ok || r.error_code === 400) return { ok: false, reason: 'rejected', description: r.description };
   return r;
 }
 
@@ -291,6 +312,11 @@ async function drainLocked(link, deadline) {
       // Can never succeed: report it and move on, so later posts aren't blocked.
       await db.run(sql`DELETE FROM outbox WHERE id = ${job.id}`);
       if (job.kind === 'post' || job.kind === 'album') await countChannelDelivery(link.tgChannelId, false);
+      // A refused deletion: forget the post, or every probe would find it
+      // gone again and repeat the notice.
+      if (job.kind === 'delete') {
+        await db.run(sql`DELETE FROM mirrored WHERE tg_chat_id = ${link.tgChannelId} AND tg_message_id = ${job.sort_key}`);
+      }
       await notifyOwner(link, T.chFail(title, T.chJobKind[job.kind], reasonText));
       continue;
     }
