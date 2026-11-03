@@ -1,13 +1,18 @@
 // Minimal client for the EitaaYar API (https://eitaayar.ir/api/<token>/<method>),
 // token encryption for advanced mode, and the stored diagnostic findings.
 // Never log a request URL or a token: the token is part of the URL.
+//
+// Telegram Serverless can't connect to Eitaa's network, so calls go through
+// a Cloudflare Worker (relay/worker.js) when EITAA_RELAY_URL is set. Each
+// request is signed (ECDSA P-256 over "<unix time>\n<path>") with
+// EITAA_RELAY_KEY; the Worker holds only the public key.
 
 import { fetch, FormData, db } from 'sdk';
 import { sql } from 'sdk/db';
 import * as CONFIG from './config.js';
 import { now } from './util.js';
 
-const BASE = 'https://eitaayar.ir/api/';
+const DIRECT = 'https://eitaayar.ir';
 const NETWORK_RETRY_MS = 9000;
 
 // Read through a namespace import: an older config.js without these names
@@ -15,6 +20,26 @@ const NETWORK_RETRY_MS = 9000;
 export const SHARED_TOKEN = String(CONFIG.EITAA_YAR_TOKEN || '');
 export const OPERATOR_USERNAME = String(CONFIG.EITAA_OPERATOR_USERNAME || '').replace(/^@/, '');
 const TOKEN_KEY = String(CONFIG.EITAA_TOKEN_KEY || '');
+export const RELAY_URL = String(CONFIG.EITAA_RELAY_URL || '').replace(/\/+$/, '');
+const RELAY_KEY = String(CONFIG.EITAA_RELAY_KEY || '');
+
+export function relayEnabled() {
+  return Boolean(RELAY_URL && RELAY_KEY);
+}
+
+let relayKeyPromise = null;
+
+// Headers proving the request comes from this bot.
+async function relayHeaders(path) {
+  const s = globalThis.crypto && globalThis.crypto.subtle;
+  if (!s) throw new Error('relay: no WebCrypto');
+  if (!relayKeyPromise) {
+    relayKeyPromise = s.importKey('pkcs8', fromBase64(RELAY_KEY), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  }
+  const ts = String(now());
+  const sig = await s.sign({ name: 'ECDSA', hash: 'SHA-256' }, await relayKeyPromise, utf8Encode(ts + '\n' + path));
+  return { 'x-relay-ts': ts, 'x-relay-sig': toBase64(new Uint8Array(sig)) };
+}
 
 // Simple mode needs the shared token and the operator's Eitaa account;
 // advanced mode needs the key that protects stored tokens.
@@ -45,7 +70,8 @@ function fields(params, into) {
 
 async function rawCall(token, method, params, file) {
   knownTokens.add(token);
-  const url = BASE + token + '/' + method;
+  const path = '/api/' + token + '/' + method;
+  const url = (relayEnabled() ? RELAY_URL : DIRECT) + path;
   let body;
   if (file) {
     body = new FormData();
@@ -60,7 +86,9 @@ async function rawCall(token, method, params, file) {
   const t0 = Date.now();
   let res;
   try {
-    res = await fetch(url, { method: 'POST', body });
+    const init = { method: 'POST', body };
+    if (relayEnabled()) init.headers = await relayHeaders(path);
+    res = await fetch(url, init);
   } catch (e) {
     return { ok: false, error_code: 0, description: 'network error', network: true, detail: redact(e && e.message), ms: Date.now() - t0 };
   }
@@ -114,6 +142,8 @@ export function classifyEitaa(r) {
   if (r.ok) return null;
   const code = Number(r.error_code) || 0;
   const desc = String(r.description || '').toLowerCase();
+  // The relay itself refused or couldn't reach Eitaa: keep posts queued.
+  if (desc.startsWith('relay:')) return 'unavailable';
   if (r.network || code === 0 || code >= 500 || r.http >= 500) return 'unavailable';
   if (code === 429 || /too many|flood|rate/.test(desc)) return 'rate';
   if (code === 401 || /token|unauthori[sz]ed|توکن/.test(desc)) return 'auth';

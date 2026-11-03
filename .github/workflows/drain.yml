@@ -40,6 +40,8 @@ jobs:
           EITAA_YAR_TOKEN: ${{ secrets.EITAA_YAR_TOKEN }}
           EITAA_OPERATOR_USERNAME: ${{ secrets.EITAA_OPERATOR_USERNAME }}
           EITAA_TOKEN_KEY: ${{ secrets.EITAA_TOKEN_KEY }}
+          EITAA_RELAY_URL: ${{ secrets.EITAA_RELAY_URL }}
+          EITAA_RELAY_KEY: ${{ secrets.EITAA_RELAY_KEY }}
         run: |
           set +x
           node scripts/write-config.mjs

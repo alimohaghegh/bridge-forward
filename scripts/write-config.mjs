@@ -9,6 +9,9 @@ const owner = (process.env.OWNER_TELEGRAM_ID || '').trim();
 const eitaaToken = (process.env.EITAA_YAR_TOKEN || '').trim();
 const operator = (process.env.EITAA_OPERATOR_USERNAME || '').trim().replace(/^@/, '');
 const tokenKey = (process.env.EITAA_TOKEN_KEY || '').trim();
+// The Cloudflare relay (relay/worker.js) and the key that signs requests to it.
+const relayUrl = (process.env.EITAA_RELAY_URL || '').trim().replace(/\/+$/, '');
+const relayKey = (process.env.EITAA_RELAY_KEY || '').replace(/\s+/g, '');
 
 if (!token) {
   console.error('BALE_BOT_TOKEN is empty.');
@@ -23,6 +26,8 @@ const validOperator = /^[A-Za-z][A-Za-z0-9_]{2,}$/.test(operator) ? operator : '
 if (!eitaaToken) console.log('::warning::EITAA_YAR_TOKEN is empty: Eitaa simple mode is disabled.');
 if (!validOperator) console.log('::warning::EITAA_OPERATOR_USERNAME is empty or invalid: Eitaa simple mode is disabled.');
 if (!tokenKey) console.log('::warning::EITAA_TOKEN_KEY is empty: Eitaa advanced mode is disabled.');
+const validRelayUrl = /^https:\/\/[A-Za-z0-9.-]+$/.test(relayUrl) ? relayUrl : '';
+if (!validRelayUrl || !relayKey) console.log('::warning::EITAA_RELAY_URL or EITAA_RELAY_KEY is empty or invalid: Eitaa is called directly (unreachable from Telegram Serverless).');
 
 const content =
   '// Generated at deploy time by scripts/write-config.mjs. Do not commit.\n' +
@@ -30,7 +35,9 @@ const content =
   `export const OWNER_TELEGRAM_ID = ${Number(owner)};\n` +
   `export const EITAA_YAR_TOKEN = ${JSON.stringify(eitaaToken)};\n` +
   `export const EITAA_OPERATOR_USERNAME = ${JSON.stringify(validOperator)};\n` +
-  `export const EITAA_TOKEN_KEY = ${JSON.stringify(tokenKey)};\n`;
+  `export const EITAA_TOKEN_KEY = ${JSON.stringify(tokenKey)};\n` +
+  `export const EITAA_RELAY_URL = ${JSON.stringify(validRelayUrl)};\n` +
+  `export const EITAA_RELAY_KEY = ${JSON.stringify(relayKey)};\n`;
 
 writeFileSync('tgcloud/lib/config.js', content, { mode: 0o600 });
 console.log('tgcloud/lib/config.js written.');

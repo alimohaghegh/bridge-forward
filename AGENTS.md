@@ -188,6 +188,10 @@ The platform manages the bot's webhook for you, derived from your deployed
   owner's shared token and only an id the owner approved (reply to the
   request); advanced mode stores the user's token AES-GCM-encrypted
   (`EITAA_TOKEN_KEY`). Missing Eitaa secrets disable a mode, never a deploy.
+  Telegram Serverless can't reach Eitaa at all, so EitaaYar calls go through
+  the Cloudflare Worker in `relay/worker.js` (deployed by hand in the
+  owner's Cloudflare dashboard, not by tgcloud), signed with
+  `EITAA_RELAY_KEY`; `EITAA_RELAY_URL` names it.
   Owner `/eitaa_diag [fmt|methods|size|gateway]` stores findings
   (tags, limits, methods) in `eitaa_settings`.
 - CI logs are public (public repo): `tgcloud run` outputs must hold counts

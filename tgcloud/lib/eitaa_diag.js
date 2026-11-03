@@ -7,7 +7,7 @@
 import { api, db, fetch, InputFile } from 'sdk';
 import { sql } from 'sdk/db';
 import {
-  SHARED_TOKEN, eitaaCallOnce, eitaaCall, channelToken, describeFailure, messageIdOf, redact,
+  SHARED_TOKEN, RELAY_URL, relayEnabled, eitaaCallOnce, eitaaCall, channelToken, describeFailure, messageIdOf, redact,
   getSetting, setSetting, updateCaps, eitaaCaps, webCryptoAvailable, simpleModeEnabled, advancedModeEnabled,
 } from './eitaa.js';
 import { channelRow } from './eitaa_mirror.js';
@@ -120,7 +120,8 @@ export async function runEitaaDiag() {
   out.push(`sleep(200): ${slept === null ? 'ممکن نیست' : slept + 'ms'}`);
 
   out.push('', '— دسترسی از سرور تلگرام —');
-  out.push(fetchLine('GET eitaayar.ir', await timedFetch('https://eitaayar.ir/')));
+  out.push(fetchLine('GET eitaayar.ir (مستقیم)', await timedFetch('https://eitaayar.ir/')));
+  out.push(relayEnabled() ? 'رله: ' + JSON.stringify(await relayPing()) : 'رله: تنظیم نشده (EITAA_RELAY_URL / EITAA_RELAY_KEY)');
 
   if (SHARED_TOKEN) {
     out.push(line('getMe (توکن مشترک)', await eitaaCallOnce(SHARED_TOKEN, 'getMe', {})));
@@ -424,11 +425,24 @@ export async function gatewayProbe() {
   return out;
 }
 
+// The relay's own check: can Cloudflare reach eitaayar.ir right now?
+async function relayPing() {
+  const t = Date.now();
+  try {
+    const res = await fetch(RELAY_URL + '/ping');
+    const data = JSON.parse(await res.text());
+    return { http: res.status, ms: Date.now() - t, eitaayar: data.eitaayar, ok: data.ok };
+  } catch (e) {
+    return { ok: false, ms: Date.now() - t, error: redact(e && e.message).slice(0, 100) };
+  }
+}
+
 // CI probe: reachability, getMe and runtime facts. Output is public in CI
 // logs, so it carries no ids, tokens or contents.
 export async function runEitaaCiProbe() {
   const out = { at: now(), runtime: runtimeCaps(), simpleMode: simpleModeEnabled(), advancedMode: advancedModeEnabled() };
   out.site = await timedFetch('https://eitaayar.ir/');
+  out.relay = relayEnabled() ? await relayPing() : 'not configured';
   // What else can (not) be reached, to tell a block on Eitaa from a
   // general problem with Iranian hosts.
   out.reach = {};
