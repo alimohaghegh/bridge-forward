@@ -148,6 +148,15 @@ export async function runBaleState() {
   }
   // Without ids here: CI logs are public (the owner sees them with /bale_diag deletes).
   out.lastDeletes = (await getSetting('bale_deletes', [])).map(({ tg, bale, ...rest }) => rest);
+  // Bale attempts per method in the last 30 minutes, and how many calls
+  // (a call = one baleCall with its retries) there were.
+  out.calls30m = await db.all(sql`
+    SELECT method, count(*) AS attempts, count(DISTINCT call_id) AS calls,
+           sum(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS ok, min(at_ms) AS first_ms, max(at_ms) AS last_ms
+    FROM bale_calls WHERE at_ms > ${Date.now() - 30 * 60 * 1000} GROUP BY method`);
+  // Channel posts the bot recorded (claimed) in the last 30 minutes.
+  out.claimed30m = (await db.get(sql`
+    SELECT count(*) AS n FROM delivered WHERE chat_id < 0 AND created_at > ${t - 30 * 60}`)).n;
   out.now = t;
   return out;
 }
