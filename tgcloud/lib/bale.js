@@ -7,6 +7,7 @@ import { sleep } from './util.js';
 
 const BASE = 'https://tapi.bale.ai/bot';
 const MAX_RETRY_WAIT_SECONDS = 10;
+const NETWORK_RETRY_MS = 15500;
 
 async function rawCall(method, params, files) {
   const url = BASE + BALE_BOT_TOKEN + '/' + method;
@@ -48,15 +49,19 @@ async function rawCall(method, params, files) {
 
 // Calls a Bale method. Returns the raw envelope ({ ok, result } or
 // { ok: false, error_code, description, parameters }); never throws.
-// A network failure is retried once right away: from the platform, the first
-// connection to Bale sometimes times out (after ~5 s) while the next succeeds.
-// Only one retry, because a handler run is limited to roughly 30 s.
+// From the platform, new connections to Bale often time out (after ~5 s, two
+// in a row is common) while the next one succeeds and then stays fast, so a
+// network failure is retried until NETWORK_RETRY_MS has passed (at most ~4
+// attempts), keeping a handler run under its ~30 s limit.
 // A 429 is retried once after `retry_after`. The runtime has no timers, so
 // without one only short waits (≤ 2 s) are retried, relying on Bale's own
 // round-trip time as the pause.
 export async function baleCall(method, params, files) {
+  const started = Date.now();
   let r = await rawCall(method, params, files);
-  if (!r.ok && r.network) r = await rawCall(method, params, files);
+  while (!r.ok && r.network && Date.now() - started < NETWORK_RETRY_MS) {
+    r = await rawCall(method, params, files);
+  }
   if (!r.ok && r.error_code === 429) {
     const wait = Number(r.parameters && r.parameters.retry_after) || 1;
     if (wait <= MAX_RETRY_WAIT_SECONDS && ((await sleep(wait * 1000)) || wait <= 2)) {
