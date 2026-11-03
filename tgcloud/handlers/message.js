@@ -12,7 +12,7 @@ import {
   showMenu, showHelp, isEitaaStep, handleEitaaStep, handleOwnerReply, looksLikeEitaaToken, listRequests,
 } from '../lib/eitaa_link.js';
 import {
-  runEitaaDiag, runFmtDiag, runFmt2Diag, runFmt3Diag, runFmt4Diag, runFmt5Diag, runEitaaRender, runEitaaResend, runMethodsDiag, runSizeDiag, runEitaaCiProbe, runEitaaState, gatewayProbe,
+  runEitaaDiag, runFmtDiag, runFmt2Diag, runFmt3Diag, runFmt4Diag, runFmt5Diag, runHealth, runEitaaRender, runEitaaResend, runMethodsDiag, runSizeDiag, runEitaaCiProbe, runEitaaState, gatewayProbe,
 } from '../lib/eitaa_diag.js';
 import { sendLinkInstructions } from '../lib/start.js';
 import { loadBaleFormat, runBaleFmtDiag } from '../lib/bale_fmt.js';
@@ -300,6 +300,7 @@ export default async function (message, ctx) {
   if (!(ctx && ctx.update) && message && message.__mirrortest === true) return runMirrorTest();
   if (!(ctx && ctx.update) && message && message.__eitaa === true) return runEitaaCiProbe();
   if (!(ctx && ctx.update) && message && message.__eitaa_state === true) return runEitaaState();
+  if (!(ctx && ctx.update) && message && message.__health === true) return runHealth();
   if (!(ctx && ctx.update) && message && message.__eitaa_fmt2 === true) return runFmt2Diag();
   if (!(ctx && ctx.update) && message && message.__eitaa_fmt3 === true) return runFmt3Diag();
   if (!(ctx && ctx.update) && message && message.__eitaa_fmt4 === true) return runFmt4Diag();

@@ -552,6 +552,34 @@ export async function runEitaaResend(onlyId) {
   return { ok: true, id: row.id, queue: status, after };
 }
 
+// CI probe (__health): the Telegram webhook's state (url left out) and
+// which invisible menu texts Telegram accepts (sent to the owner, deleted
+// right away).
+export async function runHealth() {
+  const out = {};
+  try {
+    const w = await api.getWebhookInfo();
+    out.webhook = {
+      set: Boolean(w.url), pending: w.pending_update_count, lastError: w.last_error_message || null,
+      lastErrorAgo: w.last_error_date ? Math.round(Date.now() / 1000 - w.last_error_date) : null,
+      allowed: w.allowed_updates,
+    };
+  } catch (e) {
+    out.webhook = { error: e && e.description };
+  }
+  out.invisible = {};
+  for (const [name, text] of [['U+2800', '\u2800'], ['U+3164', '\u3164'], ['U+200B', '\u200B'], ['U+2063', '\u2063'], ['nbsp', '\u00A0']]) {
+    try {
+      const m = await api.sendMessage({ chat_id: OWNER_TELEGRAM_ID, text, parse_mode: 'HTML', disable_notification: true });
+      out.invisible[name] = 'ok';
+      await api.deleteMessage({ chat_id: OWNER_TELEGRAM_ID, message_id: m.message_id }).catch(() => null);
+    } catch (e) {
+      out.invisible[name] = `${e && e.code} ${e && e.description}`;
+    }
+  }
+  return out;
+}
+
 // CI probe (__eitaa_state): stored findings and the outcome of the owner's
 // last mirrored posts — ids, statuses and issue codes only (public logs).
 export async function runEitaaState() {
