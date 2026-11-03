@@ -13,7 +13,8 @@
 // reported to the channel owner with the post's panel title tg-<id>.
 // Deleted posts are found by probing: editMessageReplyMarkup on a channel
 // post the bot didn't write answers "message can't be edited" while it
-// exists and "message to edit not found" once it is gone (nothing changes).
+// exists and "message to edit not found" or "MESSAGE_ID_INVALID" once it is
+// gone (nothing changes).
 
 import { api, db, InputFile, BotApiError } from 'sdk';
 import { sql } from 'sdk/db';
@@ -21,7 +22,7 @@ import {
   eitaaCall, classifyEitaa, isTemporary, messageIdOf, eitaaCaps, channelToken, describeFailure,
 } from './eitaa.js';
 import { toEitaaChunks, toEitaaCaption } from './eitaa_html.js';
-import { MAX_FILE_BYTES, now, rowsOf, sleep } from './util.js';
+import { MAX_FILE_BYTES, now, rowsOf, sleep, deletedPostAnswer } from './util.js';
 import { E } from './texts.js';
 
 const LOCK_SECONDS = 40;
@@ -653,7 +654,7 @@ async function postGone(chatId, messageId) {
     await api.editMessageReplyMarkup({ chat_id: chatId, message_id: messageId });
     return false;
   } catch (e) {
-    return Boolean(e && e.code === 400 && /message to edit not found/i.test(String(e.description)));
+    return deletedPostAnswer(e);
   }
 }
 

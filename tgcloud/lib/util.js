@@ -58,6 +58,15 @@ export function formatDate(unixSeconds) {
   return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
 }
 
+// Whether a Bot API error from probing a channel post (editMessageReplyMarkup
+// on a post the bot didn't write) means the post was deleted. Telegram says
+// "message to edit not found" when the bot can't edit messages there, and
+// "MESSAGE_ID_INVALID" when it can (seen live, 2026-11-03). An existing post
+// answers "message can't be edited" or "message is not modified".
+export function deletedPostAnswer(e) {
+  return Boolean(e && e.code === 400 && /message to edit not found|MESSAGE_ID_INVALID/i.test(String(e.description)));
+}
+
 // Base64 and UTF-8 without btoa/TextEncoder (not all are in the runtime).
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 

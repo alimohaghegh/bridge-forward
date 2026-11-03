@@ -11,7 +11,8 @@
 // Deletions: the Bot API sends no update when a channel post is deleted, so
 // recent mirrored posts are probed — editMessageReplyMarkup on a post the
 // bot didn't write answers "can't be edited" while it exists and "message
-// to edit not found" once it is gone (nothing is changed either way).
+// to edit not found" (or, when it may edit, "MESSAGE_ID_INVALID") once it
+// is gone (nothing is changed either way).
 
 import { api, db } from 'sdk';
 import { sql } from 'sdk/db';
@@ -25,7 +26,7 @@ import { getChannel, countChannelDelivery, telegramChannelTitle } from './channe
 import { recordBaleSuccess, recordBaleFailure } from './store.js';
 import { getSetting, setSetting } from './eitaa.js';
 import { T } from './texts.js';
-import { now, rowsOf } from './util.js';
+import { now, rowsOf, deletedPostAnswer } from './util.js';
 
 const LOCK_SECONDS = 40;
 const PERMANENT = new Set(['too_large', 'download', 'unsupported', 'rejected']);
@@ -370,7 +371,7 @@ async function postGone(chatId, messageId) {
     await api.editMessageReplyMarkup({ chat_id: chatId, message_id: messageId });
     return false;
   } catch (e) {
-    return e && e.code === 400 && /message to edit not found/i.test(String(e.description));
+    return deletedPostAnswer(e);
   }
 }
 
