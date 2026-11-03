@@ -153,7 +153,11 @@ async function eitaaSelfTest() {
   const sp = toEitaaChunks('secret', [{ type: 'spoiler', offset: 0, length: 6 }], opts);
   checks.unsupported = sp.chunks[0].text === 'secret' && sp.issues.has('spoiler');
   const long = toEitaaChunks('x'.repeat(30) + '\n\n' + 'y'.repeat(30), [{ type: 'bold', offset: 25, length: 10 }], { ...opts, limit: 40 });
-  checks.split = long.chunks.length === 2 && long.chunks[0].text.endsWith('<b>xxxxx</b>\n\n') && long.chunks[1].text.startsWith('<b>');
+  // Split in two, each chunk with balanced tags, no text lost (invisible
+  // marks may be added to repeated tagged pieces).
+  checks.split = long.chunks.length === 2
+    && long.chunks.every((c) => (c.text.match(/<b>/g) || []).length === (c.text.match(/<\/b>/g) || []).length)
+    && long.chunks.map((c) => c.text.replace(/<\/?b>|[\u2060\u200B]/g, '')).join('').replace(/\s/g, '') === 'x'.repeat(30) + 'y'.repeat(30);
   const caps = await eitaaCaps();
   const fwd = buildParts({ message_id: 5, text: 'hi', forward_origin: { type: 'channel', chat: { title: 'X' } } }, caps, { link: 'https://t.me/c/1/5' });
   checks.forward = fwd.parts.length === 1 && fwd.parts[0].text === 'hi';
