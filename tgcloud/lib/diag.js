@@ -319,3 +319,43 @@ export async function runBurstReport() {
   const deleted = await cleanupBurst(owner.baleChatId, Number(st.fromCallId) || 0);
   return { ok: true, claimed, queuedLeft: left, mirrored, sent: sends, duplicates: (sends.ok || 0) - mirrored, errors, debug, deletedAfter: deleted };
 }
+
+// Which Telegram answers show that a channel post was deleted (CI
+// `__probe_methods`). The usual check answered "can't be edited" for a post
+// deleted minutes ago until the next post arrived (a stale copy on
+// Telegram's side). Tried on each channel's newest post, none of them visible
+// in the channel; the last one (forward to the owner, removed at once) is
+// the ground truth. Answers only: no ids, no contents.
+export async function runProbeMethods() {
+  const answer = async (fn) => {
+    const t0 = Date.now();
+    try {
+      const r = await fn();
+      return ['ok', Date.now() - t0, r];
+    } catch (e) {
+      return [`${e && e.code} ${String((e && e.description) || e).slice(0, 60)}`, Date.now() - t0];
+    }
+  };
+  const out = [];
+  const t = Math.floor(Date.now() / 1000);
+  for (const ch of await db.all(sql`SELECT tg_channel_id, owner_tg_id FROM channels WHERE tg_channel_id != -42`)) {
+    const chat = ch.tg_channel_id;
+    const last = await db.get(sql`SELECT max(message_id) AS id, max(created_at) AS at FROM delivered WHERE chat_id = ${chat}`);
+    if (!last || !last.id) continue;
+    const mid = Number(last.id);
+    const r = { seenAgoS: t - last.at };
+    r.edit1 = await answer(() => api.editMessageReplyMarkup({ chat_id: chat, message_id: mid }));
+    r.react = await answer(() => api.setMessageReaction({ chat_id: chat, message_id: mid, reaction: [] }));
+    r.edit2 = await answer(() => api.editMessageReplyMarkup({ chat_id: chat, message_id: mid }));
+    const g = await answer(() => api.getChat({ chat_id: chat }));
+    r.getChat = g.slice(0, 2);
+    r.edit3 = await answer(() => api.editMessageReplyMarkup({ chat_id: chat, message_id: mid }));
+    const f = await answer(() => api.forwardMessage({ chat_id: ch.owner_tg_id, from_chat_id: chat, message_id: mid, disable_notification: true }));
+    if (f[0] === 'ok' && f[2] && f[2].message_id) await api.deleteMessage({ chat_id: ch.owner_tg_id, message_id: f[2].message_id }).catch(() => null);
+    r.forward = f.slice(0, 2);
+    r.edit4 = await answer(() => api.editMessageReplyMarkup({ chat_id: chat, message_id: mid }));
+    for (const k of ['edit1', 'react', 'edit2', 'edit3', 'edit4']) r[k] = r[k].slice(0, 2);
+    out.push(r);
+  }
+  return out;
+}

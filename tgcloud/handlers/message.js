@@ -23,7 +23,7 @@ import { hasPendingCode, pollBale, notifyLinked } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
 import {
-  runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState, formatDeleteLog, formatCallLog, runBurstPrepare, runBurstReport,
+  runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState, formatDeleteLog, formatCallLog, runBurstPrepare, runBurstReport, runProbeMethods,
 } from '../lib/diag.js';
 import {
   touchUser, getUser, claimMessage, maybeCleanup, countDelivery, isOwner, recordBaleSuccess, recordBaleFailure,
@@ -182,6 +182,7 @@ const CI_RUNS = {
   __bale_state: runBaleState,
   __burst_prepare: runBurstPrepare,
   __burst_report: runBurstReport,
+  __probe_methods: runProbeMethods,
   __eitaa: runEitaaCiProbe,
   __eitaa_state: runEitaaState,
   // Retry queued channel posts and find deletions (Bale and Eitaa side by side).

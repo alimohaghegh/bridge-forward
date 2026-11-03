@@ -64,7 +64,7 @@ jobs:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           PROBE: ${{ inputs.probe }}
         run: |
-          case "$PROBE" in __diag|__mirrortest|__eitaa|__eitaa_state|__bale_state) ;; *) echo "unknown probe"; exit 1;; esac
+          case "$PROBE" in __diag|__mirrortest|__eitaa|__eitaa_state|__bale_state|__probe_methods) ;; *) echo "unknown probe"; exit 1;; esac
           bash scripts/run-and-annotate.sh "$PROBE" "{ $PROBE: true }" || true
 
       - name: Probe (run 2)
@@ -72,5 +72,5 @@ jobs:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           PROBE: ${{ inputs.probe }}
         run: |
-          case "$PROBE" in __diag|__mirrortest|__eitaa|__eitaa_state|__bale_state) ;; *) echo "unknown probe"; exit 1;; esac
+          case "$PROBE" in __diag|__mirrortest|__eitaa|__eitaa_state|__bale_state|__probe_methods) ;; *) echo "unknown probe"; exit 1;; esac
           bash scripts/run-and-annotate.sh "$PROBE" "{ $PROBE: true }" || true
