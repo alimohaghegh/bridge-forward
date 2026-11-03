@@ -63,7 +63,7 @@ jobs:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           PROBE: ${{ inputs.probe }}
         run: |
-          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend) ;; *) echo "unknown probe"; exit 1;; esac
+          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4) ;; *) echo "unknown probe"; exit 1;; esac
           bash scripts/run-and-annotate.sh "$PROBE" "{ $PROBE: true }" || true
 
       - name: Probe (run 2)
@@ -72,6 +72,6 @@ jobs:
           PROBE: ${{ inputs.probe }}
         run: |
           # Probes that post messages run once.
-          case "$PROBE" in __eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend) exit 0;; esac
-          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend) ;; *) echo "unknown probe"; exit 1;; esac
+          case "$PROBE" in __eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4) exit 0;; esac
+          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4) ;; *) echo "unknown probe"; exit 1;; esac
           bash scripts/run-and-annotate.sh "$PROBE" "{ $PROBE: true }" || true

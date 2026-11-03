@@ -280,6 +280,29 @@ const FMT3 = [
   `7) ` + postHtml(' '),
 ];
 
+// fmt4: does a text that starts with * _ / switch Eitaa's HTML off? Each is
+// its own message, labels at the end (the start must stay the variant).
+const FMT4 = [
+  ['tg-diag-fmt4', '*test*\n<b>bold</b> <i>italic</i> (4-1)'],
+  ['tg-diag-fmt4', '\u200B*test*\n<b>bold</b> <i>italic</i> (4-2)'],
+  ['tg-diag-fmt4', '_test_\n<b>bold</b> <i>italic</i> (4-3)'],
+  ['tg-diag-fmt4', '/test/\n<b>bold</b> <i>italic</i> (4-4)'],
+  ['tg-diag-fmt4', 'x *test*\n<b>bold</b> <i>italic</i> (4-5)'],
+  ['tg-57', 'x *test*\n<b>bold</b> <i>italic</i> (4-6)'],
+  ['tg-diag-fmt4', '\u200B' + postHtml('\n') + ' (4-7)'],
+];
+
+export async function runFmt4Diag() {
+  const m = await testMapping();
+  if (!m) return { ok: false, error: 'no test mapping' };
+  const out = [];
+  for (const [title, text] of FMT4) {
+    const r = await eitaaCallOnce(m.token, 'sendMessage', { chat_id: m.chat, title, text, parse_mode: 'html' });
+    out.push(`${text.slice(-5)} ${r.ok ? 'ok' : describeFailure(r).slice(0, 80)}`);
+  }
+  return { ok: true, sent: out };
+}
+
 export async function runFmt3Diag() {
   const m = await testMapping();
   if (!m) return { ok: false, error: 'no test mapping' };
