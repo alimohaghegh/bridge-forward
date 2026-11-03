@@ -265,6 +265,26 @@ export async function runBurstReport() {
       held.set(e.run_id, true);
     } else if (e.kind === 'release') held.delete(e.run_id);
   }
+  // Each job sent twice: ms between the sends, same run (isolate) or not,
+  // and whether the first send was marked done before the second.
+  const twice = [];
+  const byJob = new Map();
+  for (const e of ev) if (e.kind === 'send' || e.kind === 'done') {
+    if (!byJob.has(e.key)) byJob.set(e.key, []);
+    byJob.get(e.key).push(e);
+  }
+  for (const list of byJob.values()) {
+    const s = list.filter((e) => e.kind === 'send');
+    if (s.length < 2) continue;
+    twice.push({
+      gapMs: s[1].at_ms - s[0].at_ms,
+      sameRun: s[0].run_id === s[1].run_id,
+      doneBefore: list.some((e) => e.kind === 'done' && e.id > s[0].id && e.id < s[1].id),
+      doneCount: list.filter((e) => e.kind === 'done').length,
+    });
+  }
+  const acq = new Map();
+  for (const e of ev) if (e.kind === 'acquire' || e.kind === 'release') acq.set(e.run_id, (acq.get(e.run_id) || 0) + (e.kind === 'acquire' ? 1 : -1));
   const debug = {
     events: ev.length, claims: ev.filter((e) => e.kind === 'claim').length, claimedTwice: multi('claim'),
     jobs: ev.filter((e) => e.kind === 'job').length, queuedTwice: multi('job'),
@@ -273,6 +293,9 @@ export async function runBurstReport() {
     // Clock check: event times relative to the prepare run's clock.
     firstEventMinusPrepareMs: ev.length ? ev[0].at_ms - st.atMs : null,
     runs: new Set(ev.map((e) => e.run_id)).size,
+    dones: ev.filter((e) => e.kind === 'done').length,
+    unreleasedRuns: [...acq.values()].filter((v) => v > 0).length,
+    twice: twice.slice(0, 8),
   };
   await db.run(sql`DELETE FROM debug_events`);
   const deleted = await cleanupBurst(owner.baleChatId, st.atMs - 120000);

@@ -353,6 +353,7 @@ async function drainLocked(link, deadline, token) {
 
     if (r.ok) {
       await db.run(sql`DELETE FROM outbox WHERE id = ${job.id}`);
+      await dbg(link.tgChannelId, 'done', job.id);
       if (job.kind === 'post' || job.kind === 'album') await countChannelDelivery(link.tgChannelId, true);
       await recordBaleSuccess();
       if (job.alerted) recovered = true;
