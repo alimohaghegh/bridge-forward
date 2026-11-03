@@ -169,7 +169,7 @@ The platform manages the bot's webhook for you, derived from your deployed
   the Bale bot, or a code posted in a group — nothing is posted in a channel).
   Posts, edits and deletions go through a durable ordered queue
   (`lib/mirror.js`, table `outbox`) that keeps each job until Bale accepts it;
-  `.github/workflows/drain.yml` re-runs it every 5 min (`__drain`, Bale and
+  `.github/workflows/drain.yml` re-runs it every minute (`__drain`, Bale and
   Eitaa), dispatched by the Cloudflare Worker's cron (GitHub `schedule`
   never fired here).
   Deleted posts are found by probing `editMessageReplyMarkup` ("message to

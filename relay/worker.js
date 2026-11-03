@@ -5,7 +5,7 @@
    https://eitaayar.ir/api/<token>/<method>, and nothing is stored or
    logged. The key below is the PUBLIC half: not a secret.
    /ping (no signature) only reports whether eitaayar.ir answers.
-   Its cron trigger (every 5 minutes) starts the bot's "Channel mirror
+   Its cron trigger (every minute) starts the bot's "Channel mirror
    retry" workflow on GitHub, because GitHub's own schedule is unreliable.
    That needs the Worker secret GH_TOKEN: a fine-grained token limited to
    this repository with Actions: read and write.
