@@ -5,7 +5,9 @@
 // <blockquote>, <tg-spoiler> and <span> show up as literal text, so they are
 // never emitted: pre becomes one <code> per line, and underline,
 // strikethrough, spoiler, blockquote, custom emoji… become plain text and are
-// reported as issues.
+// reported as issues. EitaaYar doesn't parse a tag that contains a line
+// break (it prints it as text), so every tag is closed and reopened at each
+// line break — it looks the same.
 //
 // EitaaYar places each tag by searching for the tagged text from the start
 // of the message (seen live: in "test … <b>test</b>" the bold lands on the
@@ -39,6 +41,18 @@ function safeUrl(url) {
   return typeof url === 'string' && /^https?:\/\/\S+$/i.test(url) ? url : null;
 }
 
+// Adds span `s` cut into one piece per line (pre becomes one <code> per
+// line this way too); pieces that are only spaces are dropped.
+function pushPerLine(text, spans, s) {
+  let a = s.start;
+  for (let i = s.start; i <= s.end; i++) {
+    if (i === s.end || text[i] === '\n') {
+      if (i > a && text.slice(a, i).trim()) spans.push({ ...s, start: a, end: i });
+      a = i + 1;
+    }
+  }
+}
+
 // Spans with their open/close tags, plus the entity types that were lost.
 function htmlSpans(text, entities, tags) {
   const allowed = new Set((tags || []).filter((t) => EMITTABLE.has(t)));
@@ -57,21 +71,10 @@ function htmlSpans(text, entities, tags) {
         issues.add('text_link');
         continue;
       }
-      spans.push({ ...s, open: `<a href="${escapeAttr(url)}">`, close: '</a>' });
+      pushPerLine(text, spans, { ...s, open: `<a href="${escapeAttr(url)}">`, close: '</a>' });
       continue;
     }
-    if (s.type === 'pre') {
-      // One <code> per line: Eitaa has no block code.
-      let a = s.start;
-      for (let i = s.start; i <= s.end; i++) {
-        if (i === s.end || text[i] === '\n') {
-          if (i > a) spans.push({ ...s, start: a, end: i, open: '<code>', close: '</code>' });
-          a = i + 1;
-        }
-      }
-      continue;
-    }
-    spans.push({ ...s, open: `<${tag}>`, close: `</${tag}>` });
+    pushPerLine(text, spans, { ...s, open: `<${tag}>`, close: `</${tag}>` });
   }
   spans.sort((a, b) => a.start - b.start || b.end - a.end || a.index - b.index);
   return { spans, issues };

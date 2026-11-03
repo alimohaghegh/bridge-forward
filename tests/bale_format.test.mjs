@@ -112,3 +112,7 @@ test('a text message with a hyperlink is planned with the link', () => {
   assert.equal(plan.ops[0].text, 'go [here](https://h.i)');
   assert.equal(plan.ops[0].plain, 'go here');
 });
+
+test('touching bold pieces become one bold run in Bale too', () => {
+  assert.equal(toBaleMarkdown('#tag rest', [{ type: 'hashtag', offset: 0, length: 4 }, { type: 'bold', offset: 0, length: 4 }, { type: 'bold', offset: 4, length: 5 }]), '*#tag rest*');
+});

@@ -18,8 +18,29 @@ export function normalizeEntities(text, entities) {
     if (start >= end) return;
     spans.push({ type: e.type, start, end, url: e.url, language: e.language, index });
   });
+  return mergeTouching(spans);
+}
+
+// Telegram may split one formatted run into touching entities of the same
+// type (e.g. bold over a hashtag, then bold over the rest). Rendered apart,
+// they give "</b><b>", which EitaaYar prints as text and Bale's markers
+// can't express. Same-type spans that touch or overlap are joined (links
+// only when the URL is the same).
+function mergeTouching(spans) {
   spans.sort((a, b) => a.start - b.start || b.end - a.end || a.index - b.index);
-  return spans;
+  const out = [];
+  for (const s of spans) {
+    const prev = out.find((p) => p.type === s.type && p.url === s.url && !AUTO_TYPES.has(s.type)
+      && s.start <= p.end && s.end >= p.start);
+    if (prev) {
+      prev.start = Math.min(prev.start, s.start);
+      prev.end = Math.max(prev.end, s.end);
+    } else {
+      out.push({ ...s });
+    }
+  }
+  out.sort((a, b) => a.start - b.start || b.end - a.end || a.index - b.index);
+  return out;
 }
 
 // Moves a span's edges inward past whitespace (markers must touch text).

@@ -517,11 +517,13 @@ export async function runEitaaRender() {
 // CI probe (__eitaa_resend): sends the owner's last mirrored post again
 // through the real mirror path (queue → re-read → send), to compare it with
 // the diagnostic messages in the same app.
-export async function runEitaaResend() {
+export async function runEitaaResend(onlyId) {
+  const id = Number.isSafeInteger(onlyId) ? onlyId : null;
   const row = await db.get(sql`
     SELECT p.tg_channel_id AS ch, p.tg_message_id AS id FROM eitaa_posts p
     JOIN eitaa_channels c ON c.tg_channel_id = p.tg_channel_id
     WHERE c.owner_tg_id = ${OWNER_TELEGRAM_ID} AND p.kind = 'post' AND p.status IN ('done', 'partial')
+      AND (${id} IS NULL OR p.tg_message_id = ${id})
     ORDER BY p.tg_message_id DESC LIMIT 1`);
   if (!row) return { ok: false, error: 'no post' };
   await db.run(sql`

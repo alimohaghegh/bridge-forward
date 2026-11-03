@@ -304,7 +304,7 @@ export default async function (message, ctx) {
   if (!(ctx && ctx.update) && message && message.__eitaa_fmt3 === true) return runFmt3Diag();
   if (!(ctx && ctx.update) && message && message.__eitaa_fmt4 === true) return runFmt4Diag();
   if (!(ctx && ctx.update) && message && message.__eitaa_render === true) return runEitaaRender();
-  if (!(ctx && ctx.update) && message && message.__eitaa_resend === true) return runEitaaResend();
+  if (!(ctx && ctx.update) && message && message.__eitaa_resend) return runEitaaResend(message.__eitaa_resend);
   // Scheduled run (GitHub Actions): retry queued channel posts, find
   // deletions. The output lands in public CI logs: counts only, no ids.
   if (!(ctx && ctx.update) && message && message.__drain === true) {

@@ -73,7 +73,8 @@ test('long text splits at paragraphs without breaking tags or losing text', () =
     assert.ok(c.text.length <= 1000);
     assert.equal((c.text.match(/<b>/g) || []).length, (c.text.match(/<\/b>/g) || []).length);
   }
-  assert.equal(r.chunks.map((c) => c.text.replace(/<\/?b>/g, '')).join('').replace(/\s/g, ''), text.replace(/\s/g, ''));
+  // Invisible marks (U+2060/U+200B) may be added to repeated pieces.
+  assert.equal(r.chunks.map((c) => c.text.replace(/<\/?b>/g, '')).join('').replace(/[\s\u2060\u200B]/g, ''), text.replace(/\s/g, ''));
 });
 
 // EitaaYar places tags by searching for their text from the message start.
@@ -114,4 +115,26 @@ test('codes never contain each other, even with many duplicates', () => {
   const inners = [...html.matchAll(/<b>([^<]*)<\/b>/g)].map((m) => m[1]);
   assert.equal(new Set(inners).size, 20);
   for (const x of inners) assert.equal(plain.indexOf(x), plain.lastIndexOf(x));
+});
+
+test('touching pieces of the same format are joined (no "</b><b>")', () => {
+  const r = one('#tag rest', [{ type: 'hashtag', offset: 0, length: 4 }, { type: 'bold', offset: 0, length: 4 }, { type: 'bold', offset: 4, length: 5 }]);
+  assert.equal(r.chunks[0].text, '<b>#tag rest</b>');
+});
+
+test('a format spanning a line break is closed and reopened per line', () => {
+  const r = one('line one\nline two', [{ type: 'italic', offset: 0, length: 17 }]);
+  assert.equal(r.chunks[0].text, '<i>line one</i>\n<i>line two</i>');
+});
+
+test('the real post: bold over a hashtag, italic poem over two lines', () => {
+  const text = '#گزارش_تصویری | شب نخست\n\nز عزم توست ولایت\nز صبر توست رسالت\n\nپایان';
+  const r = one(text, [
+    { type: 'hashtag', offset: 0, length: 13 }, { type: 'bold', offset: 0, length: 13 }, { type: 'bold', offset: 13, length: 10 },
+    { type: 'italic', offset: 25, length: 33 },
+  ]);
+  const html = r.chunks[0].text;
+  assert.ok(!html.includes('</b><b>'));
+  for (const [, inner] of html.matchAll(/<(b|i)>([^<]*)<\/\1>/g)) assert.ok(!inner.includes('\n'), 'no tag spans a line break');
+  assert.equal(html, '<b>#گزارش_تصویری | شب نخست</b>\n\n<i>ز عزم توست ولایت</i>\n<i>ز صبر توست رسالت</i>\n\nپایان');
 });
