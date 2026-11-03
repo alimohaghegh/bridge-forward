@@ -445,6 +445,18 @@ export async function runEitaaCiProbe() {
   }
   const bad = await eitaaCallOnce('bot0:00000000-0000-0000-0000-000000000000', 'getMe', {});
   out.badTokenShape = { http: bad.http, keys: Object.keys(bad).filter((k) => k !== 'ms').sort(), error_code: bad.error_code, description: String(bad.description || '').slice(0, 80) };
+  // What the plain-HTTP answer says (a firewall page?). Bad token only.
+  out.httpBodies = {};
+  for (const url of ['http://eitaayar.ir/', 'http://eitaayar.ir/api/bot0:00000000-0000-0000-0000-000000000000/getMe']) {
+    try {
+      const res = await fetch(url);
+      const headers = {};
+      for (const k of ['server', 'content-type', 'via', 'x-cache', 'cf-ray', 'retry-after']) if (res.headers.has(k)) headers[k] = res.headers.get(k);
+      out.httpBodies[url.replace(/bot0:[0-9-]+/, 'bot0:…')] = { status: res.status, headers, body: redact((await res.text()).replace(/\s+/g, ' ')).slice(0, 300) };
+    } catch (e) {
+      out.httpBodies[url] = { error: redact(e && e.message).slice(0, 100) };
+    }
+  }
   out.gateway = await gatewayProbe();
   out.caps = await eitaaCaps();
   return out;
