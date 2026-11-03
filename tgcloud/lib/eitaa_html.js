@@ -5,7 +5,10 @@
 // <blockquote>, <tg-spoiler> and <span> show up as literal text, so they are
 // never emitted: pre becomes one <code> per line, and underline,
 // strikethrough, spoiler, blockquote, custom emoji… become plain text and are
-// reported as issues. EitaaYar doesn't parse a tag that contains a line
+// reported as issues. EitaaYar doesn't parse nested tags (seen live:
+// <a><b>x</b></a> showed the <b> tags as text), so where formats overlap
+// only one is kept — link, then code, then bold, then italic — and the rest
+// is reported. EitaaYar doesn't parse a tag that contains a line
 // break (it prints it as text), so every tag is closed and reopened at each
 // line break — it looks the same. Hashtags, mentions and written urls are
 // left out of tags (see outsideAuto).
@@ -76,6 +79,30 @@ function outsideAuto(text, spans, entities) {
   return out.sort((a, b) => a.start - b.start || b.end - a.end || a.index - b.index);
 }
 
+const PRIORITY = { a: 0, code: 1, b: 2, strong: 2, i: 3, em: 3 };
+
+// Makes the spans non-overlapping: each stretch of text keeps only its most
+// important tag. Returns the pieces (consecutive stretches of one span are
+// one piece) and adds the dropped types to `issues`.
+function flatten(text, spans, issues) {
+  if (spans.length < 2) return spans;
+  const cuts = [...new Set(spans.flatMap((s) => [s.start, s.end]))].sort((a, b) => a - b);
+  const pieces = [];
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const a = cuts[i];
+    const b = cuts[i + 1];
+    const covering = spans.filter((s) => s.start <= a && s.end >= b);
+    if (!covering.length) continue;
+    covering.sort((x, y) => PRIORITY[x.tag] - PRIORITY[y.tag] || x.index - y.index);
+    const [win, ...lost] = covering;
+    for (const l of lost) issues.add(l.type);
+    const last = pieces[pieces.length - 1];
+    if (last && last.src === win && last.end === a) last.end = b;
+    else pieces.push({ ...win, start: a, end: b, src: win });
+  }
+  return pieces.filter((p) => text.slice(p.start, p.end).trim());
+}
+
 // Spans with their open/close tags, plus the entity types that were lost.
 function htmlSpans(text, entities, tags) {
   const allowed = new Set((tags || []).filter((t) => EMITTABLE.has(t)));
@@ -94,13 +121,13 @@ function htmlSpans(text, entities, tags) {
         issues.add('text_link');
         continue;
       }
-      pushPerLine(text, spans, { ...s, open: `<a href="${escapeAttr(url)}">`, close: '</a>' });
+      pushPerLine(text, spans, { ...s, tag, open: `<a href="${escapeAttr(url)}">`, close: '</a>' });
       continue;
     }
-    pushPerLine(text, spans, { ...s, open: `<${tag}>`, close: `</${tag}>` });
+    pushPerLine(text, spans, { ...s, tag, open: `<${tag}>`, close: `</${tag}>` });
   }
   spans.sort((a, b) => a.start - b.start || b.end - a.end || a.index - b.index);
-  return { spans: outsideAuto(text, spans, entities), issues };
+  return { spans: flatten(text, outsideAuto(text, spans, entities), issues), issues };
 }
 
 // Invisible marks: a code of equal length per duplicated piece, so no code

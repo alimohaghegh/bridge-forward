@@ -27,9 +27,10 @@ test('bold, italic, code; text is escaped', () => {
   assert.equal(r.chunks[0].text, '<b>a&lt;b</b> <i>c</i> <code>d</code>');
 });
 
-test('nested and overlapping entities produce well-nested tags', () => {
-  assert.equal(one('ab cd', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 2 }]).chunks[0].text, '<b>ab <i>cd</i></b>');
-  assert.equal(one('abcdefgh', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 5 }]).chunks[0].text, '<b>abc<i>de</i></b><i>fgh</i>');
+test('nested and overlapping entities never produce nested tags', () => {
+  // EitaaYar can't read nested tags: overlapping formats keep one tag each stretch.
+  assert.equal(one('ab cd', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 2 }]).chunks[0].text, '<b>ab cd</b>');
+  assert.equal(one('abcdefgh', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 5 }]).chunks[0].text, '<b>abcde</b><i>fgh</i>');
 });
 
 test('UTF-16 offsets: an emoji counts as two units', () => {
@@ -142,4 +143,26 @@ test('the real post: bold over a hashtag, italic poem over two lines', () => {
 test('tags are cut around hashtags, mentions and written urls', () => {
   const r = one('see #tag and @me now', [{ type: 'bold', offset: 0, length: 20 }, { type: 'hashtag', offset: 4, length: 4 }, { type: 'mention', offset: 13, length: 3 }]);
   assert.equal(r.chunks[0].text, '<b>see </b>#tag<b> and </b>@me<b> now</b>');
+});
+
+test('a hyperlinked bold line: the link wins, no nested tags (seen live)', () => {
+  const r = one('تست\nتست', [{ type: 'text_link', offset: 0, length: 3, url: 'https://x.y/' }, { type: 'bold', offset: 0, length: 3 }]);
+  const html = r.chunks[0].text;
+  assert.match(html, /^<a href="https:\/\/x\.y\/">تست[\u2060\u200B]*<\/a>\nتست$/);
+  assert.ok(r.issues.has('bold'));
+});
+
+test('bold around a link stays bold outside it', () => {
+  const r = one('go here now', [{ type: 'bold', offset: 0, length: 11 }, { type: 'text_link', offset: 3, length: 4, url: 'https://x.y/' }]);
+  assert.equal(r.chunks[0].text, '<b>go </b><a href="https://x.y/">here</a><b> now</b>');
+});
+
+test('no output ever has a tag inside another', () => {
+  const ents = [{ type: 'bold', offset: 0, length: 20 }, { type: 'italic', offset: 5, length: 10 }, { type: 'code', offset: 7, length: 3 }, { type: 'text_link', offset: 2, length: 15, url: 'https://x.y/' }];
+  const html = one('abcdefghijklmnopqrstuvwxyz', ents).chunks[0].text;
+  let depth = 0;
+  for (const [tag] of html.matchAll(/<\/?[a-z]+/g)) {
+    depth += tag.startsWith('</') ? -1 : 1;
+    assert.ok(depth <= 1, html);
+  }
 });

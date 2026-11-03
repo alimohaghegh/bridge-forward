@@ -147,8 +147,11 @@ async function eitaaSelfTest() {
   const one = (text, entities, o) => toEitaaChunks(text, entities, { ...opts, ...o }).chunks;
   checks.plain = one('a < b & c', [])[0].text === 'a < b & c' && one('a < b', [])[0].html === false;
   checks.escape = one('a<b', [{ type: 'bold', offset: 0, length: 3 }])[0].text === '<b>a&lt;b</b>';
-  checks.nested = one('ab cd', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 2 }])[0].text === '<b>ab <i>cd</i></b>';
-  checks.overlap = one('abcdefgh', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 5 }])[0].text === '<b>abc<i>de</i></b><i>fgh</i>';
+  // EitaaYar can't read nested tags: one tag per stretch of text.
+  checks.nested = one('ab cd', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 2 }])[0].text === '<b>ab cd</b>';
+  checks.overlap = one('abcdefgh', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 5 }])[0].text === '<b>abcde</b><i>fgh</i>';
+  checks.linkBold = one('go here now', [{ type: 'bold', offset: 0, length: 11 }, { type: 'text_link', offset: 3, length: 4, url: 'https://x.y/' }])[0].text
+    === '<b>go </b><a href="https://x.y/">here</a><b> now</b>';
   checks.utf16 = one('😀x', [{ type: 'bold', offset: 2, length: 1 }])[0].text === '😀<b>x</b>';
   checks.link = one('go', [{ type: 'text_link', offset: 0, length: 2, url: 'https://a.b/?x="1"&y' }])[0].text === '<a href="https://a.b/?x=&quot;1&quot;&amp;y">go</a>';
   const sp = toEitaaChunks('secret', [{ type: 'spoiler', offset: 0, length: 6 }], opts);
