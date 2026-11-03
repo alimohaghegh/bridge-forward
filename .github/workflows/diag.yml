@@ -1,0 +1,43 @@
+name: Bale diagnostics
+
+# Probes Bale from Telegram Serverless (getMe, and a test message to the
+# owner's linked Bale chat). Deploys nothing; prints timings and error codes only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write config from secrets
+        env:
+          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+          OWNER_TELEGRAM_ID: ${{ secrets.OWNER_TELEGRAM_ID }}
+        run: node scripts/write-config.mjs
+
+      - name: Fetch cloud state
+        run: npx tgcloud fetch
+
+      - name: Probe Bale (run 1)
+        run: |
+          npx tgcloud run handlers/message '{ __diag: true }' || true
+
+      - name: Probe Bale (run 2)
+        run: |
+          npx tgcloud run handlers/message '{ __diag: true }' || true

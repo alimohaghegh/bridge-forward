@@ -28,6 +28,7 @@ const OWNER_COMMANDS = [
   { command: 'users', description: 'فهرست کاربران (مدیر)' },
   { command: 'block', description: 'مسدود کردن کاربر (مدیر)' },
   { command: 'unblock', description: 'رفع مسدودی کاربر (مدیر)' },
+  { command: 'diag', description: 'بررسی اتصال به بله (مدیر)' },
 ];
 
 async function step(fn) {

@@ -9,6 +9,7 @@ import {
 } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
+import { runDiag, runBaleProbe, formatProbe } from '../lib/diag.js';
 import {
   touchUser, getUser, clearLink, claimMessage, maybeCleanup, countDelivery, isOwner,
   recordBaleSuccess, recordBaleFailure,
@@ -106,6 +107,11 @@ async function handleCommand(cmd, chatId, tgId, user) {
     }
   }
 
+  if (cmd.name === 'diag' && isOwner(tgId)) {
+    await reply(chatId, formatProbe(await runBaleProbe(user.baleChatId, '🔧 آزمایش اتصال (از طرف مدیر ربات)')));
+    return true;
+  }
+
   if (ADMIN_COMMANDS.has(cmd.name) && isOwner(tgId)) {
     await replyHtml(chatId, await runAdminCommand(cmd.name, cmd.arg));
     return true;
@@ -149,6 +155,7 @@ export default async function (message, ctx) {
   // Deploy-time setup, reachable only through `tgcloud run` (real updates
   // always carry ctx.update and never this field).
   if (!(ctx && ctx.update) && message && message.__setup === true) return runSetup();
+  if (!(ctx && ctx.update) && message && message.__diag === true) return runDiag();
 
   if (!message || !message.chat || message.chat.type !== 'private' || !message.from || message.from.is_bot) return;
   const chatId = message.chat.id;
