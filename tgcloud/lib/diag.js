@@ -101,7 +101,7 @@ export async function runMirrorTest() {
 // newest mirrored posts it also asks Telegram whether they still exist.
 export async function runBaleState() {
   const t = Math.floor(Date.now() / 1000);
-  const channels = await db.all(sql`SELECT tg_channel_id, lock_until, probed_at, delivered_count, failed_count FROM channels`);
+  const channels = await db.all(sql`SELECT tg_channel_id, bale_chat_id, lock_until, probed_at, delivered_count, failed_count FROM channels`);
   const out = { channels: [] };
   for (const ch of channels) {
     const id = ch.tg_channel_id;
@@ -124,7 +124,18 @@ export async function runBaleState() {
       probes.push({ ageS: t - r.created_at, checkedAgoS: r.checked_at ? t - r.checked_at : null, telegram: answer });
     }
     const tracked = await db.get(sql`SELECT count(*) AS n, max(message_id) AS top FROM delivered WHERE chat_id = ${id}`);
+    // The Bale bot's rights in the Bale chat (read only).
+    let baleRights = null;
+    const me = await baleCallOnce('getMe', {});
+    const admins = await baleCallOnce('getChatAdministrators', { chat_id: ch.bale_chat_id });
+    if (admins.ok && me.ok) {
+      const bot = (admins.result || []).find((a) => a.user && a.user.id === me.result.id);
+      baleRights = bot ? Object.fromEntries(Object.entries(bot).filter(([k]) => k.startsWith('can_') || k === 'status')) : 'not admin';
+    } else {
+      baleRights = { error: admins.error_code || me.error_code, via: admins.via };
+    }
     out.channels.push({
+      baleRights,
       lockHeld: ch.lock_until > t, probedAgoS: ch.probed_at ? t - ch.probed_at : null,
       delivered: ch.delivered_count, failed: ch.failed_count,
       mirrored: { total: m.n, last47h: m.recent || 0, newestAgoS: m.newest ? t - m.newest : null },
