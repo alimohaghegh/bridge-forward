@@ -11,7 +11,9 @@ import { drainEitaa } from '../lib/eitaa_mirror.js';
 import {
   showMenu, showHelp, isEitaaStep, handleEitaaStep, handleOwnerReply, looksLikeEitaaToken, listRequests,
 } from '../lib/eitaa_link.js';
-import { runEitaaDiag, runFmtDiag, runMethodsDiag, runSizeDiag, runEitaaCiProbe, gatewayProbe } from '../lib/eitaa_diag.js';
+import {
+  runEitaaDiag, runFmtDiag, runMethodsDiag, runSizeDiag, runEitaaCiProbe, runEitaaState, gatewayProbe,
+} from '../lib/eitaa_diag.js';
 import { sendLinkInstructions } from '../lib/start.js';
 import { loadBaleFormat, runBaleFmtDiag } from '../lib/bale_fmt.js';
 import {
@@ -296,6 +298,7 @@ export default async function (message, ctx) {
   if (!(ctx && ctx.update) && message && message.__probe === true) return runDeleteProbe();
   if (!(ctx && ctx.update) && message && message.__mirrortest === true) return runMirrorTest();
   if (!(ctx && ctx.update) && message && message.__eitaa === true) return runEitaaCiProbe();
+  if (!(ctx && ctx.update) && message && message.__eitaa_state === true) return runEitaaState();
   // Scheduled run (GitHub Actions): retry queued channel posts, find
   // deletions. The output lands in public CI logs: counts only, no ids.
   if (!(ctx && ctx.update) && message && message.__drain === true) {

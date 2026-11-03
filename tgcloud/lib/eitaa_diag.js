@@ -440,6 +440,16 @@ async function relayPing() {
   }
 }
 
+// CI probe (__eitaa_state): stored findings and the outcome of the owner's
+// last mirrored posts — ids, statuses and issue codes only (public logs).
+export async function runEitaaState() {
+  const rows = await db.all(sql`
+    SELECT p.tg_message_id AS id, p.kind, p.status, p.issues, p.last_error, p.parts_done
+    FROM eitaa_posts p JOIN eitaa_channels c ON c.tg_channel_id = p.tg_channel_id
+    WHERE c.owner_tg_id = ${OWNER_TELEGRAM_ID} ORDER BY p.updated_at DESC LIMIT 8`);
+  return { caps: await getSetting('caps', null), baleFmt: await getSetting('bale_fmt', null), posts: rows };
+}
+
 // CI probe: reachability, getMe and runtime facts. Output is public in CI
 // logs, so it carries no ids, tokens or contents.
 export async function runEitaaCiProbe() {
