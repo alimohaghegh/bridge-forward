@@ -6,7 +6,8 @@
 // through the relay when it is configured, and attempts alternate between
 // the relay and the direct route, so either one failing is survived.
 
-import { fetch, FormData } from 'sdk';
+import { fetch, FormData, db } from 'sdk';
+import { sql } from 'sdk/db';
 import { BALE_BOT_TOKEN } from './config.js';
 import { sleep } from './util.js';
 import { RELAY_URL, relayEnabled, relayHeaders } from './relay.js';
@@ -71,19 +72,39 @@ async function rawCall(method, params, files, viaRelay) {
 // A 429 is retried once after `retry_after`. The runtime has no timers, so
 // without one only short waits (≤ 2 s) are retried, relying on Bale's own
 // round-trip time as the pause.
+// Attempts of methods that change something are logged (bale_calls).
+const LOGGED = /^(send|edit|delete|forward|copy)/;
+
+async function logged(callId, attempt, method, params, files, viaRelay) {
+  const t = Date.now();
+  const r = await rawCall(method, params, files, viaRelay);
+  if (LOGGED.test(method)) {
+    try {
+      await db.run(sql`
+        INSERT INTO bale_calls (at_ms, call_id, attempt, method, ms, via, ok, network, code)
+        VALUES (${t}, ${callId}, ${attempt}, ${method}, ${Date.now() - t}, ${r.via || null}, ${r.ok ? 1 : 0}, ${r.network ? 1 : 0}, ${r.error_code || null})`);
+      if (Math.random() < 0.05) await db.run(sql`DELETE FROM bale_calls WHERE id < (SELECT max(id) - 400 FROM bale_calls)`);
+    } catch {
+      // Diagnosis only.
+    }
+  }
+  return r;
+}
+
 export async function baleCall(method, params, files) {
   const started = Date.now();
   const relay = relayEnabled();
+  const callId = Math.random().toString(36).slice(2, 8);
   let attempt = 0;
-  let r = await rawCall(method, params, files, relay);
+  let r = await logged(callId, 0, method, params, files, relay);
   while (!r.ok && r.network && Date.now() - started < NETWORK_RETRY_MS) {
     attempt++;
-    r = await rawCall(method, params, files, relay && attempt % 2 === 0);
+    r = await logged(callId, attempt, method, params, files, relay && attempt % 2 === 0);
   }
   if (!r.ok && r.error_code === 429) {
     const wait = Number(r.parameters && r.parameters.retry_after) || 1;
     if (wait <= MAX_RETRY_WAIT_SECONDS && ((await sleep(wait * 1000)) || wait <= 2)) {
-      r = await rawCall(method, params, files, relay);
+      r = await logged(callId, attempt + 1, method, params, files, relay);
     }
   }
   return r;

@@ -33,7 +33,10 @@ const PERMANENT = new Set(['too_large', 'download', 'unsupported', 'rejected']);
 const ALERT_AFTER_ATTEMPTS = 2;
 const STALE_ALBUM_MS = 30 * 1000;
 const PROBE_WINDOW_SECONDS = 47 * 3600; // Bale deletes only messages < 48 h old
-const PROBE_INTERVAL_SECONDS = 60;
+// Activity-driven probes run at most this often. The scheduled run (every
+// minute) always probes: with a strict 60 s gap it was skipped whenever it
+// came a second early, i.e. most of the time.
+const PROBE_INTERVAL_SECONDS = 50;
 const PROBE_BATCH = 25;
 const PROBE_GRACE_MS = 3000;
 const MIRROR_RETENTION_SECONDS = 30 * 24 * 3600;
@@ -340,12 +343,16 @@ async function drainLocked(link, deadline) {
 }
 
 // Probes recently mirrored posts and queues deletions for the ones gone.
-async function probeDeletions(link, deadline) {
+// Probe counts of this isolate's runs, for the scheduled run's output.
+export const probeStats = { runs: 0, checked: 0, gone: 0 };
+
+async function probeDeletions(link, deadline, force) {
   const t = now();
   const claimed = await db.run(sql`
     UPDATE channels SET probed_at = ${t}
-    WHERE tg_channel_id = ${link.tgChannelId} AND probed_at < ${t - PROBE_INTERVAL_SECONDS}`);
+    WHERE tg_channel_id = ${link.tgChannelId} AND (${force ? 1 : 0} = 1 OR probed_at < ${t - PROBE_INTERVAL_SECONDS})`);
   if (!claimed.rowsAffected) return 0;
+  probeStats.runs++;
 
   const rows = rowsOf(await db.all(sql`
     SELECT tg_message_id FROM mirrored
@@ -359,7 +366,9 @@ async function probeDeletions(link, deadline) {
     if ((await postGone(link.tgChannelId, mid)) && (await postGone(link.tgChannelId, mid))) {
       await enqueueDelete(link.tgChannelId, mid);
       gone++;
+      probeStats.gone++;
     }
+    probeStats.checked++;
     await db.run(sql`
       UPDATE mirrored SET checked_at = ${now()} WHERE tg_chat_id = ${link.tgChannelId} AND tg_message_id = ${mid}`);
   }
@@ -380,7 +389,7 @@ async function postGone(chatId, messageId) {
 // starts after `deadline` (a send can take ~20 s while Bale is flaky, and a
 // run is cut off near 30 s). With `probe`, also checks for deleted posts
 // once the queue is empty.
-export async function drain(tgChannelId, { deadline, probe } = {}) {
+export async function drain(tgChannelId, { deadline, probe, forceProbe } = {}) {
   deadline = deadline || Date.now() + 8000;
   let result = { status: 'busy' };
   for (let round = 0; round < 3; round++) {
@@ -393,7 +402,7 @@ export async function drain(tgChannelId, { deadline, probe } = {}) {
       // deadline; the deletions it finds are applied now if time is left,
       // else on the next run.
       if (result.status === 'empty' && probe) {
-        const gone = await probeDeletions(link, deadline + PROBE_GRACE_MS);
+        const gone = await probeDeletions(link, deadline + PROBE_GRACE_MS, forceProbe);
         if (gone > 0 && Date.now() < deadline) result = await drainLocked(link, deadline);
       }
     } finally {
@@ -415,7 +424,7 @@ export async function drainAll(budgetMs) {
   for (const row of list) {
     if (Date.now() > end) break;
     const id = Number(row.tg_channel_id);
-    const r = await drain(id, { deadline: Math.min(end, Date.now() + 8000), probe: true });
+    const r = await drain(id, { deadline: Math.min(end, Date.now() + 8000), probe: true, forceProbe: true });
     out[id] = r.status;
   }
   await db.run(sql`DELETE FROM mirrored WHERE created_at < ${now() - MIRROR_RETENTION_SECONDS}`);

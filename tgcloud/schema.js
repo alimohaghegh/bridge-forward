@@ -227,3 +227,19 @@ export const eitaaSettings = table('eitaa_settings', {
   value:     text('value'),
   updatedAt: integer('updated_at').notNull().default(sql`(unixepoch())`),
 });
+
+// Bale API attempts that change something (send/edit/delete), for
+// diagnosing duplicates and delays: timing, route and outcome only — no ids
+// or contents. Kept short (pruned to the last few hundred rows).
+export const baleCalls = table('bale_calls', {
+  id:      integer('id').primaryKey({ autoIncrement: true }),
+  atMs:    integer('at_ms').notNull(),
+  callId:  text('call_id').notNull(),                 // one baleCall (its retries share it)
+  attempt: integer('attempt').notNull(),
+  method:  text('method').notNull(),
+  ms:      integer('ms').notNull(),
+  via:     text('via'),                                // relay | direct
+  ok:      boolean('ok').notNull(),
+  network: boolean('network').notNull(),
+  code:    integer('code'),
+});

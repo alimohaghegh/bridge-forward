@@ -161,3 +161,27 @@ export async function formatDeleteLog() {
   return ['🗑 آخرین درخواست‌های حذف در بله (ساعت تهران):', ...list.map((d) =>
     `${time(d.at)} · ${d.why || '?'} · تلگرام ${d.tg ?? '?'} → بله ${d.bale ?? '?'} · ${d.ok ? (d.result === false ? 'ok اما false' : 'انجام شد') : `خطا ${d.code} ${d.desc || ''}`} · ${d.via || ''}`)].join('\n');
 }
+
+// Owner only (/bale_diag calls): the last Bale send/edit/delete attempts,
+// grouped per call, in Tehran time. A call whose first attempt timed out
+// (network, ~5 s) and whose retry succeeded may have arrived twice.
+export async function formatCallLog() {
+  const rows = await db.all(sql`SELECT * FROM bale_calls ORDER BY id DESC LIMIT 60`);
+  if (!rows.length) return 'هنوز تلاشی ثبت نشده است.';
+  const calls = new Map();
+  for (const r of rows.reverse()) {
+    if (!calls.has(r.call_id)) calls.set(r.call_id, []);
+    calls.get(r.call_id).push(r);
+  }
+  const time = (ms) => new Date(ms + 3.5 * 3600 * 1000).toISOString().slice(11, 19);
+  const lines = ['📮 آخرین تلاش‌های ارسال/حذف در بله (ساعت تهران):'];
+  let suspects = 0;
+  for (const list of [...calls.values()].slice(-30)) {
+    const steps = list.map((a) => `${a.via === 'relay' ? '☁️' : '↔️'}${a.ok ? '✅' : '❌'}${a.ms}ms${a.network ? '' : a.ok ? '' : ' ' + a.code}`);
+    const risky = list.length > 1 && list.some((a) => !a.ok && a.network && a.ms >= 4500) && list[list.length - 1].ok;
+    if (risky) suspects++;
+    lines.push(`${time(list[0].at_ms)} ${list[0].method} ${steps.join(' → ')}${risky ? ' ⚠️ شاید دوبار' : ''}`);
+  }
+  lines.push('', `مشکوک به ارسال دوباره: ${suspects}`);
+  return lines.join('\n');
+}

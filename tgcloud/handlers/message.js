@@ -7,7 +7,7 @@ import { api } from 'sdk';
 import { safeErrorText, isSystemError } from '../lib/bale.js';
 import { isSupported, deliver, deliverAlbum } from '../lib/forward.js';
 import { isAlbumItem, collectAlbum, releaseAlbumItems } from '../lib/album.js';
-import { drainAll } from '../lib/mirror.js';
+import { drainAll, probeStats } from '../lib/mirror.js';
 import { drainEitaa } from '../lib/eitaa_mirror.js';
 import {
   showMenu, showHelp, isEitaaStep, handleEitaaStep, handleOwnerReply, looksLikeEitaaToken, listRequests, cancelStep,
@@ -21,7 +21,7 @@ import { clearPending, activePending, telegramChannelTitle } from '../lib/channe
 import { hasPendingCode, pollBale, notifyLinked } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
-import { runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState, formatDeleteLog } from '../lib/diag.js';
+import { runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState, formatDeleteLog, formatCallLog } from '../lib/diag.js';
 import {
   touchUser, getUser, claimMessage, maybeCleanup, countDelivery, isOwner, recordBaleSuccess, recordBaleFailure,
 } from '../lib/store.js';
@@ -108,6 +108,7 @@ async function handleCommand(cmd, chatId, tgId, user) {
   if (cmd.name === 'bale_diag' || cmd.name === 'diag') {
     if (cmd.arg.toLowerCase() === 'fmt') await runBaleFmtDiag(chatId);
     else if (cmd.arg.toLowerCase() === 'deletes') await reply(chatId, await formatDeleteLog());
+    else if (cmd.arg.toLowerCase() === 'calls') await reply(chatId, await formatCallLog());
     else await reply(chatId, formatProbe(await runBaleProbe(user.baleChatId, '🔧 آزمایش اتصال (از طرف مدیر ربات)')) + '\n\nقالب‌بندی: /bale_diag fmt');
     return true;
   }
@@ -183,7 +184,7 @@ const CI_RUNS = {
     const [baleById, eitaa] = await Promise.all([drainAll(), drainEitaa(10000)]);
     const bale = {};
     for (const status of Object.values(baleById)) bale[status] = (bale[status] || 0) + 1;
-    return { bale, eitaa };
+    return { bale, baleProbe: { ...probeStats }, eitaa };
   },
 };
 

@@ -29,7 +29,7 @@ const LOCK_SECONDS = 40;
 const LOCK_WAIT_MS = 9000;
 const MAX_ATTEMPTS = 8;
 const ALERT_AFTER_ATTEMPTS = 2;
-const PROBE_INTERVAL_SECONDS = 60;
+const PROBE_INTERVAL_SECONDS = 50;
 const PROBE_LAST_N = 20;
 const PROBE_WINDOW_SECONDS = 60 * 24 * 3600; // the EitaaYar panel keeps posts 2 months
 const RETENTION_SECONDS = 62 * 24 * 3600;
@@ -755,7 +755,8 @@ export async function drainEitaa(budgetMs) {
     }
     const id = Number(row.tg_channel_id);
     const status = await processQueue(id, { deadline: Math.min(end, Date.now() + 6000) });
-    if (status === 'empty') await sweepDeletions(id, { deadline: Math.min(end, Date.now() + 3000) });
+    // The scheduled run always sweeps (see mirror.js PROBE_INTERVAL_SECONDS).
+    if (status === 'empty') await sweepDeletions(id, { deadline: Math.min(end, Date.now() + 3000), force: true });
     out[status] = (out[status] || 0) + 1;
   }
   const t = now();
