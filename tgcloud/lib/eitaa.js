@@ -3,15 +3,15 @@
 // Never log a request URL or a token: the token is part of the URL.
 //
 // Telegram Serverless can't connect to Eitaa's network, so calls go through
-// a Cloudflare Worker (relay/worker.js) when EITAA_RELAY_URL is set. Each
-// request is signed (ECDSA P-256 over "<unix time>\n<path>") with
-// EITAA_RELAY_KEY; the Worker holds only the public key.
+// the Cloudflare relay (lib/relay.js) when it is configured.
 
 import { fetch, FormData, db } from 'sdk';
 import { sql } from 'sdk/db';
 import * as CONFIG from './config.js';
-import { now } from './util.js';
-import { privateScalarFromPkcs8, signP256 } from './p256.js';
+import { now, toBase64, fromBase64, utf8Encode, utf8Decode } from './util.js';
+import { RELAY_URL, relayEnabled, relayHeaders } from './relay.js';
+
+export { RELAY_URL, relayEnabled };
 
 const DIRECT = 'https://eitaayar.ir';
 const NETWORK_RETRY_MS = 9000;
@@ -21,24 +21,6 @@ const NETWORK_RETRY_MS = 9000;
 export const SHARED_TOKEN = String(CONFIG.EITAA_YAR_TOKEN || '');
 export const OPERATOR_USERNAME = String(CONFIG.EITAA_OPERATOR_USERNAME || '').replace(/^@/, '');
 const TOKEN_KEY = String(CONFIG.EITAA_TOKEN_KEY || '');
-export const RELAY_URL = String(CONFIG.EITAA_RELAY_URL || '').replace(/\/+$/, '');
-const RELAY_KEY = String(CONFIG.EITAA_RELAY_KEY || '');
-
-export function relayEnabled() {
-  return Boolean(RELAY_URL && RELAY_KEY);
-}
-
-let relayScalar = null;
-
-// Headers proving the request comes from this bot.
-async function relayHeaders(path) {
-  if (!relayScalar) relayScalar = privateScalarFromPkcs8(fromBase64(RELAY_KEY));
-  if (!relayScalar) throw new Error('relay: bad EITAA_RELAY_KEY');
-  const ts = String(now());
-  const sig = await signP256(relayScalar, utf8Encode(ts + '\n' + path));
-  return { 'x-relay-ts': ts, 'x-relay-sig': toBase64(sig) };
-}
-
 // Simple mode needs the shared token and the operator's Eitaa account;
 // advanced mode needs the key that protects stored tokens.
 export function simpleModeEnabled() {
@@ -237,65 +219,6 @@ export async function updateCaps(patch) {
 // AES-GCM with a key derived as SHA-256(EITAA_TOKEN_KEY). Stored as
 // "v1:<iv b64>:<ciphertext b64>". Without WebCrypto the token is stored as
 // "plain:<token>" (documented in the README).
-
-const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-function toBase64(bytes) {
-  let out = '';
-  for (let i = 0; i < bytes.length; i += 3) {
-    const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0);
-    out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63];
-    out += i + 1 < bytes.length ? B64[(n >> 6) & 63] : '=';
-    out += i + 2 < bytes.length ? B64[n & 63] : '=';
-  }
-  return out;
-}
-
-function fromBase64(s) {
-  const clean = String(s).replace(/=+$/, '');
-  const out = [];
-  let buf = 0;
-  let bits = 0;
-  for (const ch of clean) {
-    const v = B64.indexOf(ch);
-    if (v < 0) continue;
-    buf = (buf << 6) | v;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      out.push((buf >> bits) & 255);
-    }
-  }
-  return new Uint8Array(out);
-}
-
-export function utf8Encode(s) {
-  if (typeof TextEncoder === 'function') return new TextEncoder().encode(s);
-  const out = [];
-  for (const ch of String(s)) {
-    let c = ch.codePointAt(0);
-    if (c < 0x80) out.push(c);
-    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
-    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
-    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
-  }
-  return new Uint8Array(out);
-}
-
-function utf8Decode(bytes) {
-  if (typeof TextDecoder === 'function') return new TextDecoder().decode(bytes);
-  let s = '';
-  for (let i = 0; i < bytes.length;) {
-    const b = bytes[i];
-    let c;
-    let n;
-    if (b < 0x80) { c = b; n = 1; } else if (b < 0xe0) { c = b & 31; n = 2; } else if (b < 0xf0) { c = b & 15; n = 3; } else { c = b & 7; n = 4; }
-    for (let k = 1; k < n; k++) c = (c << 6) | (bytes[i + k] & 63);
-    s += String.fromCodePoint(c);
-    i += n;
-  }
-  return s;
-}
 
 function subtle() {
   const c = globalThis.crypto;

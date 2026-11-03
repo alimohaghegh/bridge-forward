@@ -57,3 +57,63 @@ export function formatDate(unixSeconds) {
   if (!unixSeconds) return '-';
   return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
 }
+
+// Base64 and UTF-8 without btoa/TextEncoder (not all are in the runtime).
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+export function toBase64(bytes) {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0);
+    out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63];
+    out += i + 1 < bytes.length ? B64[(n >> 6) & 63] : '=';
+    out += i + 2 < bytes.length ? B64[n & 63] : '=';
+  }
+  return out;
+}
+
+export function fromBase64(s) {
+  const clean = String(s).replace(/=+$/, '');
+  const out = [];
+  let buf = 0;
+  let bits = 0;
+  for (const ch of clean) {
+    const v = B64.indexOf(ch);
+    if (v < 0) continue;
+    buf = (buf << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((buf >> bits) & 255);
+    }
+  }
+  return new Uint8Array(out);
+}
+
+export function utf8Encode(s) {
+  if (typeof TextEncoder === 'function') return new TextEncoder().encode(s);
+  const out = [];
+  for (const ch of String(s)) {
+    let c = ch.codePointAt(0);
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return new Uint8Array(out);
+}
+
+export function utf8Decode(bytes) {
+  if (typeof TextDecoder === 'function') return new TextDecoder().decode(bytes);
+  let s = '';
+  for (let i = 0; i < bytes.length;) {
+    const b = bytes[i];
+    let c;
+    let n;
+    if (b < 0x80) { c = b; n = 1; } else if (b < 0xe0) { c = b & 31; n = 2; } else if (b < 0xf0) { c = b & 15; n = 3; } else { c = b & 7; n = 4; }
+    for (let k = 1; k < n; k++) c = (c << 6) | (bytes[i + k] & 63);
+    s += String.fromCodePoint(c);
+    i += n;
+  }
+  return s;
+}

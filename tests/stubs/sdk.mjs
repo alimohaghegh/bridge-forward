@@ -1,6 +1,10 @@
 // Stand-in for the platform SDK: nothing here talks to the network.
 export const api = new Proxy({}, { get: () => async () => { throw new Error('api not available in tests'); } });
-export const fetch = Object.assign(async () => { throw new Error('fetch not available in tests'); }, {
+// A test may answer requests by setting globalThis.__testFetch.
+export const fetch = Object.assign(async (...args) => {
+  if (globalThis.__testFetch) return globalThis.__testFetch(...args);
+  throw new Error('fetch not available in tests');
+}, {
   body: { json: (x) => JSON.stringify(x), form: (x) => new URLSearchParams(x).toString(), text: (x) => x },
 });
 export class FormData { constructor() { this.fields = []; } append(k, v) { this.fields.push([k, v]); } }

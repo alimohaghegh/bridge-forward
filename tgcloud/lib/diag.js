@@ -13,7 +13,7 @@ import { saveChannel } from './channels.js';
 const BUDGET_MS = 22000;
 
 function summarize(r, ms) {
-  const out = { ok: r.ok === true, ms };
+  const out = { ok: r.ok === true, ms, via: r.via };
   if (!r.ok) {
     out.code = r.error_code;
     if (r.network) out.network = true;
@@ -55,7 +55,7 @@ export async function runDiag() {
 }
 
 export function formatProbe(report) {
-  const line = (r) => (r.ok ? `✅ ${r.ms}ms` : `❌ ${r.ms}ms code=${r.code}${r.network ? ' network' : ''} ${r.desc || ''}`);
+  const line = (r) => `${r.via === 'relay' ? '☁️ رله' : '↔️ مستقیم'} ` + (r.ok ? `✅ ${r.ms}ms` : `❌ ${r.ms}ms code=${r.code}${r.network ? ' network' : ''} ${r.desc || ''}`);
   return [
     '🔧 بررسی اتصال به بله',
     `chat id: ${report.chatIdType}`,

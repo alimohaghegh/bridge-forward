@@ -1,10 +1,11 @@
-/* Cloudflare Worker: relay from Telegram Serverless to EitaaYar.
-   Telegram's servers cannot connect to Eitaa, Cloudflare's can. Only
-   requests signed by the bot (ECDSA P-256 over "<unix time>\n<path>",
-   private key in the bot's config) are forwarded, only to
-   https://eitaayar.ir/api/<token>/<method>, and nothing is stored or
-   logged. The key below is the PUBLIC half: not a secret.
-   /ping (no signature) only reports whether eitaayar.ir answers.
+/* Cloudflare Worker: relay from Telegram Serverless to EitaaYar and Bale.
+   Telegram's servers cannot connect to Eitaa and reach Bale only now and
+   then; Cloudflare's can. Only requests signed by the bot (ECDSA P-256 over
+   "<unix time>\n<path>", private key in the bot's config) are forwarded,
+   only to https://eitaayar.ir/api/<token>/<method> and (path /bale/...)
+   https://tapi.bale.ai/bot<token>/<method>; nothing is stored or logged.
+   The key below is the PUBLIC half: not a secret.
+   /ping (no signature) only reports whether both answer.
    Its cron trigger (every minute) starts the bot's "Channel mirror
    retry" workflow on GitHub, because GitHub's own schedule is unreliable.
    That needs the Worker secret GH_TOKEN: a fine-grained token limited to
@@ -15,6 +16,8 @@ const PUBLIC_KEY = { kty: "EC", crv: "P-256", x: "-O0cbo356NG05SNUSc5BSO2j1QkzzB
 const ORIGIN = "https://eitaayar.ir";
 const MAX_SKEW_SECONDS = 300;
 const PATH = /^\/api\/[A-Za-z0-9:_-]+\/[A-Za-z]+$/;
+const BALE = "https://tapi.bale.ai";
+const BALE_PATH = /^\/bale\/bot[A-Za-z0-9:_-]+\/[A-Za-z]+$/;
 const DISPATCH = "https://api.github.com/repos/alimohaghegh/bridge-forward/actions/workflows/drain.yml/dispatches";
 
 function reply(status, body) {
@@ -59,24 +62,30 @@ export default {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/ping") {
-      const t = Date.now();
-      try {
-        const r = await fetch(ORIGIN + "/", { method: "GET" });
-        return reply(200, { ok: true, eitaayar: r.status, ms: Date.now() - t });
-      } catch (e) {
-        return reply(200, { ok: false, error: String(e && e.message).slice(0, 120), ms: Date.now() - t });
-      }
+      const probe = async (target) => {
+        const t = Date.now();
+        try {
+          const r = await fetch(target, { method: "GET" });
+          return { status: r.status, ms: Date.now() - t };
+        } catch (e) {
+          return { error: String(e && e.message).slice(0, 80), ms: Date.now() - t };
+        }
+      };
+      const eitaa = await probe(ORIGIN + "/");
+      const bale = await probe(BALE + "/");
+      return reply(200, { ok: true, eitaayar: eitaa.status, ms: eitaa.ms, bale: bale });
     }
-    if (request.method !== "POST" || !PATH.test(url.pathname)) return reply(404, { ok: false, description: "not found" });
+    const toBale = BALE_PATH.test(url.pathname);
+    if (request.method !== "POST" || !(toBale || PATH.test(url.pathname))) return reply(404, { ok: false, description: "not found" });
     if (!(await verified(request, url.pathname))) return reply(403, { ok: false, description: "relay: bad signature" });
     const headers = new Headers();
     const type = request.headers.get("content-type");
     if (type) headers.set("content-type", type);
     let r;
     try {
-      r = await fetch(ORIGIN + url.pathname, { method: "POST", headers: headers, body: request.body });
+      r = await fetch(toBale ? BALE + url.pathname.slice(5) : ORIGIN + url.pathname, { method: "POST", headers: headers, body: request.body });
     } catch (e) {
-      return reply(502, { ok: false, description: "relay: eitaayar unreachable" });
+      return reply(502, { ok: false, description: toBale ? "relay: bale unreachable" : "relay: eitaayar unreachable" });
     }
     return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") || "application/json" } });
   }

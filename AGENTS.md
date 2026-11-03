@@ -157,7 +157,9 @@ The platform manages the bot's webhook for you, derived from your deployed
 
 - Users link a Bale chat with a single-use code (`lib/linking.js`); every
   private message from a linked user is re-sent to Bale (`lib/forward.js`).
-- Bale is reached only through `lib/bale.js` (`fetch` to `tapi.bale.ai`);
+- Bale is reached only through `lib/bale.js` (`fetch` to `tapi.bale.ai`, via the
+  Cloudflare relay first — `lib/relay.js`, path `/bale/...` — then direct,
+  alternating: from the platform most direct connections time out);
   Bale updates are pulled with `getUpdates` when someone presses the verify
   button — there is no Bale webhook.
 - **Secrets:** `tgcloud/lib/config.js` (Bale token, owner id) is generated in
