@@ -16,7 +16,6 @@ import { DB_NOW_MS, rowsOf } from './util.js';
 const CHANNEL = -43;
 const ALBUMS = 3;
 const ITEMS = 6;
-const SIDE = 128;
 
 function crc32(bytes) {
   let c = ~0;
@@ -34,12 +33,16 @@ function pngChunk(type, data) {
   return [...be32(data.length), ...body, ...be32(crc32(body))];
 }
 
+// Photo n's size tells it apart when read back from Bale.
+const sideOf = (n) => 80 + n * 10;
+
 // A one-colour PNG, uncompressed (a single stored deflate block).
 export function testPng(n) {
+  const side = sideOf(n);
   const row = [0];
-  for (let x = 0; x < SIDE; x++) row.push((n * 40) % 256, 255 - n * 30, 90);
+  for (let x = 0; x < side; x++) row.push((n * 40) % 256, 255 - n * 30, 90);
   const raw = [];
-  for (let y = 0; y < SIDE; y++) raw.push(...row);
+  for (let y = 0; y < side; y++) raw.push(...row);
   let a = 1;
   let b = 0;
   for (const v of raw) {
@@ -50,7 +53,7 @@ export function testPng(n) {
   const zlib = [0x78, 0x01, 0x01, len & 255, len >> 8, ~len & 255, (~len >> 8) & 255, ...raw, ...be32(((b << 16) | a) >>> 0)];
   return new Uint8Array([
     137, 80, 78, 71, 13, 10, 26, 10,
-    ...pngChunk('IHDR', [...be32(SIDE), ...be32(SIDE), 8, 2, 0, 0, 0]),
+    ...pngChunk('IHDR', [...be32(side), ...be32(side), 8, 2, 0, 0, 0]),
     ...pngChunk('IDAT', zlib),
     ...pngChunk('IEND', []),
   ]);
@@ -92,7 +95,7 @@ const messageId = (st, album, item) => st.base + album * 20 + item;
 // The channel post of `item` in `album` (1-based); its caption is its number.
 export async function albumTestPost({ album, item }) {
   const st = await getSetting('album_test', null);
-  await db.run(sql`INSERT INTO debug_events (at_ms, kind, key, run_id) VALUES (${DB_NOW_MS}, 'album_item', ${album}, 'album')`);
+  await db.run(sql`INSERT INTO debug_events (at_ms, kind, key, run_id) VALUES (${DB_NOW_MS}, 'album_item', ${album}, ${String(Date.now())})`);
   return {
     message_id: messageId(st, album, item), date: Math.floor(st.base / 1000), media_group_id: `${st.run}-${album}`,
     chat: { id: CHANNEL, type: 'channel' }, photo: [st.photos[item - 1]], caption: String(item),
@@ -109,7 +112,7 @@ export async function runAlbumReport() {
     SELECT method, sum(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS ok FROM bale_calls
     WHERE chat_id = ${chat} AND id > ${st.fromCallId} GROUP BY method`))) calls[c.method] = c.ok;
   const left = await db.get(sql`SELECT count(*) AS n FROM outbox WHERE tg_channel_id = ${CHANNEL}`);
-  const events = rowsOf(await db.all(sql`SELECT at_ms, key FROM debug_events WHERE kind = 'album_item'`));
+  const events = rowsOf(await db.all(sql`SELECT at_ms, key, run_id FROM debug_events WHERE kind = 'album_item'`));
   const mirrored = rowsOf(await db.all(sql`
     SELECT tg_message_id, bale_ids FROM mirrored WHERE tg_chat_id = ${CHANNEL} ORDER BY tg_message_id`));
 
@@ -121,19 +124,30 @@ export async function runAlbumReport() {
     });
     const ids = rows.map((r) => JSON.parse(r.bale_ids)[0]);
     // What Bale really holds, in its own message order.
-    const captions = [];
+    const order = [];
     for (const id of ids.slice().sort((x, y) => x - y)) {
       const f = await baleCall('forwardMessage', { chat_id: chat, from_chat_id: chat, message_id: id });
-      captions.push(f.ok && f.result ? f.result.caption ?? 'none' : `error ${f.error_code}`);
+      const sizes = f.ok && f.result && f.result.photo;
+      const w = sizes && sizes.length ? Math.max(...sizes.map((x) => Number(x.width) || 0)) : 0;
+      order.push(f.ok ? (w ? (w - 80) / 10 : `keys:${Object.keys(f.result || {}).join('+')}`) : `error ${f.error_code}`);
       if (f.ok && f.result) await baleCall('deleteMessage', { chat_id: chat, message_id: f.result.message_id });
     }
-    const times = events.filter((e) => Number(e.key) === a).map((e) => Number(e.at_ms));
+    const mine = events.filter((e) => Number(e.key) === a);
+    const times = mine.map((e) => Number(e.at_ms));
+    const local = mine.map((e) => Number(e.run_id));
     albums.push({
       arrived: times.length, spreadMs: times.length ? Math.max(...times) - Math.min(...times) : null,
-      mirrored: rows.length, idsAscending: ids.every((id, i) => i === 0 || id > ids[i - 1]), captions: captions.join(','),
+      localSpreadMs: local.length ? Math.max(...local) - Math.min(...local) : null,
+      mirrored: rows.length, idsAscending: ids.every((id, i) => i === 0 || id > ids[i - 1]), order: order.join(','),
     });
   }
-  return { ok: true, sendMediaGroup: calls.sendMediaGroup || 0, sendPhoto: calls.sendPhoto || 0, queueLeft: left.n, albums };
+  // Does the database clock tick during a run?
+  const tick = [];
+  for (const start = Date.now(); Date.now() - start < 1500;) {
+    const d = await db.get(sql`SELECT ${DB_NOW_MS} AS ms`);
+    if (!tick.length || Number(d.ms) !== tick[tick.length - 1]) tick.push(Number(d.ms));
+  }
+  return { ok: true, dbTicks: tick.length, dbTickSpanMs: tick[tick.length - 1] - tick[0], sendMediaGroup: calls.sendMediaGroup || 0, sendPhoto: calls.sendPhoto || 0, queueLeft: left.n, albums };
 }
 
 export async function runAlbumCleanup() {
