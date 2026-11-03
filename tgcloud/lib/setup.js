@@ -192,8 +192,8 @@ async function selfTest() {
     checks.channelCodeKind = (await consumeCode(ch.code)) === null
       && ((await consumeCode(ch.code, { channel: true })) || {}).tgChannelId === -1001;
 
-    const plan = planMessage({ message_id: 7, text: 'x'.repeat(4500), entities: [{ type: 'bold', offset: 0, length: 3 }] });
-    checks.planText = plan.ops.length === 2 && plan.ops[0].text.startsWith('*xxx*') && plan.layout[7] === 'text';
+    const plan = planMessage({ message_id: 7, text: 'xxx ' + 'x'.repeat(4500), entities: [{ type: 'bold', offset: 0, length: 3 }] });
+    checks.planText = plan.ops.length === 2 && plan.ops[0].text.startsWith('*xxx* x') && plan.layout[7] === 'text';
     const photo = (id) => ({ message_id: id, photo: [{ file_id: 'f' + id, file_unique_id: 'u' + id }] });
     const ap = planAlbum([{ tg: 9, spec: planMessage(photo(9)).ops[0].spec, caption: '' },
       { tg: 8, spec: planMessage(photo(8)).ops[0].spec, caption: 'c' }]);
