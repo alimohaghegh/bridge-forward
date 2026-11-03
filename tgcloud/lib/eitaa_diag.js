@@ -38,6 +38,9 @@ function b64(s) {
 
 const png = () => new InputFile(b64(PNG_B64), 'diag.png', { type: 'image/png' });
 
+// The same small test image, for other diagnostics (/bale_diag fmt).
+export const diagPngBytes = () => b64(PNG_B64);
+
 async function say(text) {
   for (let i = 0; i < text.length; i += 3900) {
     await api.sendMessage({ chat_id: OWNER_TELEGRAM_ID, text: text.slice(i, i + 3900), link_preview_options: { is_disabled: true } }).catch(() => null);

@@ -20,7 +20,7 @@ import { sql } from 'sdk/db';
 import {
   eitaaCall, classifyEitaa, isTemporary, messageIdOf, eitaaCaps, channelToken, describeFailure,
 } from './eitaa.js';
-import { toEitaaChunks, toEitaaCaption, escapeText } from './eitaa_html.js';
+import { toEitaaChunks, toEitaaCaption } from './eitaa_html.js';
 import { MAX_FILE_BYTES, now, rowsOf, sleep } from './util.js';
 import { E } from './texts.js';
 
@@ -143,18 +143,6 @@ export function fileSpecOf(m, issues) {
   return null;
 }
 
-function forwardPrefix(m) {
-  const o = m.forward_origin;
-  if (!o) return null;
-  let name = '';
-  const c = o.chat || o.sender_chat;
-  if (c) name = (c.title || '') + (c.username ? ` (@${c.username})` : '');
-  else if (o.sender_user) name = [o.sender_user.first_name, o.sender_user.last_name].filter(Boolean).join(' ');
-  else if (o.sender_user_name) name = o.sender_user_name;
-  const line = E.fwdFrom(name.trim() || E.fwdUnknown);
-  return { plain: line + '\n', html: `<i>${escapeText(line)}</i>\n` };
-}
-
 function htmlToPlain(s) {
   return s.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
 }
@@ -167,6 +155,7 @@ function mapLink(lat, lon) {
   return `https://www.google.com/maps?q=${lat},${lon}`;
 }
 
+// Forwarded posts go out like the channel's own (no "forwarded from" line).
 // The parts a post is sent as (deterministic, so a retry resumes where it
 // stopped): [{ type: 'text', text, html, plain } | { type: 'file', spec,
 // caption, fallback }], plus issue codes. `extra` adds { suffix } (the
@@ -174,33 +163,32 @@ function mapLink(lat, lon) {
 export function buildParts(m, caps, ctx) {
   const issues = new Set();
   const opts = { tags: caps.tags, escapesOk: caps.escapesOk, countMarkup: caps.limitCountsMarkup };
-  const prefix = forwardPrefix(m);
   const link = ctx.link;
   const suffix = ctx.suffix || '';
   const parts = [];
 
-  const addText = (text, entities, pre) => {
-    const r = toEitaaChunks(text + suffix, entities, { ...opts, limit: caps.textLimit, prefix: pre });
+  const addText = (text, entities) => {
+    const r = toEitaaChunks(text + suffix, entities, { ...opts, limit: caps.textLimit });
     r.issues.forEach((i) => issues.add(i));
     if (r.chunks.length > 1) issues.add('split');
     parts.push(...r.chunks.map(textPart));
   };
 
   if (typeof m.text === 'string' && m.text.length) {
-    addText(m.text, m.entities, prefix);
+    addText(m.text, m.entities);
     return { parts, issues };
   }
 
   const spec = fileSpecOf(m, issues);
   if (spec) {
     const caption = String(m.caption || '');
-    const cap = toEitaaCaption(caption + suffix, m.caption_entities, { ...opts, limit: caps.captionLimit, prefix });
+    const cap = toEitaaCaption(caption + suffix, m.caption_entities, { ...opts, limit: caps.captionLimit });
     cap.issues.forEach((i) => issues.add(i));
     // What to send instead if the file is too big for the bot to download.
     const tooBig = E.bigFile(ctx.public ? link : '');
     const fallbackText = caption || ctx.public ? (caption ? caption + '\n\n' : '') + tooBig : '';
     const fallback = fallbackText
-      ? toEitaaChunks(fallbackText + suffix, m.caption_entities, { ...opts, limit: caps.textLimit, prefix }).chunks.map(textPart)
+      ? toEitaaChunks(fallbackText + suffix, m.caption_entities, { ...opts, limit: caps.textLimit }).chunks.map(textPart)
       : [];
     if (spec.size > MAX_FILE_BYTES) {
       issues.add('too_large');
@@ -213,7 +201,7 @@ export function buildParts(m, caps, ctx) {
       // Too long for a caption: the file, then the text as its own post.
       issues.add('long_caption');
       parts.push({ type: 'file', spec, caption: null, fallback });
-      const r = toEitaaChunks(caption + suffix, m.caption_entities, { ...opts, limit: caps.textLimit, prefix });
+      const r = toEitaaChunks(caption + suffix, m.caption_entities, { ...opts, limit: caps.textLimit });
       parts.push(...r.chunks.map(textPart));
     }
     return { parts, issues };
@@ -225,21 +213,21 @@ export function buildParts(m, caps, ctx) {
   }
   if (m.venue && m.venue.location) {
     const v = m.venue;
-    addText(E.venueText(v.title, v.address, mapLink(v.location.latitude, v.location.longitude)), [], prefix);
+    addText(E.venueText(v.title, v.address, mapLink(v.location.latitude, v.location.longitude)), []);
     return { parts, issues };
   }
   if (m.location) {
-    addText(E.locationText(mapLink(m.location.latitude, m.location.longitude)), [], prefix);
+    addText(E.locationText(mapLink(m.location.latitude, m.location.longitude)), []);
     return { parts, issues };
   }
   if (m.contact) {
     const c = m.contact;
-    addText(E.contactText([c.first_name, c.last_name].filter(Boolean).join(' '), c.phone_number), [], prefix);
+    addText(E.contactText([c.first_name, c.last_name].filter(Boolean).join(' '), c.phone_number), []);
     return { parts, issues };
   }
   if (m.poll) {
     issues.add('poll');
-    addText(E.pollText(m.poll.question, (m.poll.options || []).map((o) => o.text), link), [], prefix);
+    addText(E.pollText(m.poll.question, (m.poll.options || []).map((o) => o.text), link), []);
     return { parts, issues };
   }
   issues.add('unsupported');

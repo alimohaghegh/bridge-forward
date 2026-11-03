@@ -205,9 +205,8 @@ export async function eitaaReachable() {
   return ok;
 }
 
-// HTML tags known to render in Eitaa. Until /eitaa_diag fmt is answered,
-// the common Telegram-style set.
-export const DEFAULT_TAGS = ['b', 'i', 'u', 's', 'a', 'code', 'pre'];
+// HTML tags verified live in Eitaa (eitaa_html.js never emits others).
+export const DEFAULT_TAGS = ['b', 'i', 'code', 'a'];
 export const DEFAULT_TEXT_LIMIT = 4096;
 export const DEFAULT_CAPTION_LIMIT = 1024;
 

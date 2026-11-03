@@ -12,7 +12,7 @@ import {
   touchUser, getUser, setLink, clearLink, claimMessage, acquirePollLock, releasePollLock,
 } from './store.js';
 import { splitText } from './util.js';
-import { toBaleMarkdown, formatChunks } from './format.js';
+import { toBaleMarkdown, setBaleFormat } from './format.js';
 import { planMessage, planAlbum } from './forward.js';
 import { queueStats } from './mirror.js';
 import { toEitaaChunks } from './eitaa_html.js';
@@ -40,6 +40,7 @@ const OWNER_COMMANDS = [
   { command: 'diag', description: 'بررسی اتصال به بله (مدیر)' },
   { command: 'sync', description: 'ارسال فوری صف کانال‌ها (مدیر)' },
   { command: 'requests', description: 'درخواست‌های ایتا در انتظار (مدیر)' },
+  { command: 'bale_diag', description: 'تشخیص بله: fmt = قالب‌بندی (مدیر)' },
   { command: 'eitaa_diag', description: 'تشخیص ایتایار: fmt | methods | size (مدیر)' },
 ];
 
@@ -141,7 +142,7 @@ async function importOldLinks() {
 // Eitaa: HTML conversion, post plans and token encryption (no network).
 async function eitaaSelfTest() {
   const checks = {};
-  const opts = { tags: ['b', 'i', 'u', 's', 'a', 'code', 'pre'], escapesOk: true, countMarkup: true, limit: 4096 };
+  const opts = { tags: ['b', 'i', 'code', 'a'], escapesOk: true, countMarkup: true, limit: 4096 };
   const one = (text, entities, o) => toEitaaChunks(text, entities, { ...opts, ...o }).chunks;
   checks.plain = one('a < b & c', [])[0].text === 'a < b & c' && one('a < b', [])[0].html === false;
   checks.escape = one('a<b', [{ type: 'bold', offset: 0, length: 3 }])[0].text === '<b>a&lt;b</b>';
@@ -155,7 +156,7 @@ async function eitaaSelfTest() {
   checks.split = long.chunks.length === 2 && long.chunks[0].text.endsWith('<b>xxxxx\n\n</b>') && long.chunks[1].text.startsWith('<b>');
   const caps = await eitaaCaps();
   const fwd = buildParts({ message_id: 5, text: 'hi', forward_origin: { type: 'channel', chat: { title: 'X' } } }, caps, { link: 'https://t.me/c/1/5' });
-  checks.forward = fwd.parts.length === 1 && fwd.parts[0].html && fwd.parts[0].text.endsWith('</i>\nhi');
+  checks.forward = fwd.parts.length === 1 && fwd.parts[0].text === 'hi';
   const big = buildParts({ message_id: 6, document: { file_id: 'f', file_size: 30 * 1024 * 1024 }, caption: 'c' }, caps, { link: 'L', public: true });
   checks.bigFile = big.issues.has('too_large') && big.parts.length === 1 && big.parts[0].type === 'text' && big.parts[0].text.includes('L');
   const photo = buildParts({ message_id: 7, photo: [{ file_id: 'p', file_size: 10 }], caption: 'c' }, caps, { link: 'L' });
@@ -175,6 +176,7 @@ async function eitaaSelfTest() {
 async function selfTest() {
   const fake = -1;
   const checks = {};
+  setBaleFormat(null);
   try {
     const u = await touchUser(fake);
     checks.touchUser = u && u.tgId === fake && u.blocked === false;
@@ -191,7 +193,7 @@ async function selfTest() {
       && ((await consumeCode(ch.code, { channel: true })) || {}).tgChannelId === -1001;
 
     const plan = planMessage({ message_id: 7, text: 'x'.repeat(4500), entities: [{ type: 'bold', offset: 0, length: 3 }] });
-    checks.planText = plan.ops.length === 2 && plan.ops[0].text.startsWith('*xxx*') && plan.layout[7] === 'text';
+    checks.planText = plan.ops.length === 2 && plan.ops[0].text.startsWith('xxx') && plan.layout[7] === 'text';
     const photo = (id) => ({ message_id: id, photo: [{ file_id: 'f' + id, file_unique_id: 'u' + id }] });
     const ap = planAlbum([{ tg: 9, spec: planMessage(photo(9)).ops[0].spec, caption: '' },
       { tg: 8, spec: planMessage(photo(8)).ops[0].spec, caption: 'c' }]);
@@ -206,15 +208,9 @@ async function selfTest() {
     await clearLink(fake);
     checks.clearLink = (await getUser(fake)).baleChatId === null;
 
-    checks.boldItalic = toBaleMarkdown('سلام دنیا خوب', [
-      { type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 5, length: 5 },
-    ]) === '*سلام* _دنیا_ خوب';
-    checks.nested = toBaleMarkdown('ab cd', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 2 }]) === '*ab _cd_*';
-    checks.glued = toBaleMarkdown('abcd', [{ type: 'bold', offset: 1, length: 2 }]) === 'a *bc* d';
-    const chunks = formatChunks('x'.repeat(10) + ' ' + 'y'.repeat(10), [{ type: 'bold', offset: 5, length: 12 }], 12);
-    checks.chunkFormat = chunks.length === 2 && chunks[0].text === 'xxxxx *xxxxx*' && chunks[1].text === '*yyyyyy* yyyy'
-      && chunks[1].plain === 'yyyyyyyyyy';
-
+    // Default Bale formatting (before /bale_diag fmt): links only, typed markers stay literal.
+    checks.baleLink = toBaleMarkdown('see this', [{ type: 'text_link', offset: 4, length: 4, url: 'https://a.b/c' }]) === 'see [this](https://a.b/c)';
+    checks.baleLiteral = toBaleMarkdown('*x*', []) === '*\u200Bx*\u200B';
     const parts = splitText('a'.repeat(9000), 4000);
     checks.splitText = parts.length === 3 && parts.join('') === 'a'.repeat(9000);
 

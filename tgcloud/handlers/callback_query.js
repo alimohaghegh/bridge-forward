@@ -12,6 +12,7 @@ import { T } from '../lib/texts.js';
 import * as EL from '../lib/eitaa_link.js';
 import { onFmtButton, onMethodButton } from '../lib/eitaa_diag.js';
 import { runStartFlow } from '../lib/start.js';
+import { onBaleFmtButton } from '../lib/bale_fmt.js';
 
 async function answer(cq, text, showAlert) {
   try {
@@ -76,6 +77,10 @@ async function menuButton(cq) {
   const [ns, action, arg, arg2] = data.split(':');
   const ch = Number(arg);
 
+  if (ns === 'bd') {
+    if (isOwner(tgId)) await onBaleFmtButton(cq);
+    return true;
+  }
   if (ns === 'dg') {
     if (!isOwner(tgId)) return true;
     if (action === 'f' || action === 'fs') await onFmtButton(cq);
@@ -117,7 +122,7 @@ async function menuButton(cq) {
 
 export default async function (cq) {
   if (!cq || !cq.from) return;
-  if (typeof cq.data === 'string' && /^(m|e|dg):/.test(cq.data)) {
+  if (typeof cq.data === 'string' && /^(m|e|dg|bd):/.test(cq.data)) {
     try {
       const user = await touchUser(cq.from.id);
       if (user.blocked && !isOwner(cq.from.id)) {

@@ -17,8 +17,8 @@ import { api, db } from 'sdk';
 import { sql } from 'sdk/db';
 import { baleCall, isSystemError } from './bale.js';
 import {
-  planMessage, planAlbum, runPlan, mediaSpec, captionOf, failure, formatChunks,
-  editTextChunk, editCaption, sendTextChunk, BALE_TEXT_LIMIT, BALE_CAPTION_LIMIT,
+  planMessage, planAlbum, runPlan, mediaSpec, captionParts, failure, formatChunks,
+  editTextChunk, editCaption, sendTextChunk, BALE_TEXT_LIMIT,
 } from './forward.js';
 import { takeStaleAlbums, albumPending, releaseAlbumItems } from './album.js';
 import { getChannel, countChannelDelivery, telegramChannelTitle } from './channels.js';
@@ -198,11 +198,11 @@ async function runEdit(link, m, deadline) {
   }
 
   // Caption edit.
-  const caption = captionOf(m);
+  const cp = captionParts(m);
   const [mediaId, ...textIds] = row.ids;
   row.prefix = [mediaId];
-  if (row.layout === 'media' && !spec.noCaption && caption.length <= BALE_CAPTION_LIMIT) {
-    const r = await editCaption(chatId, mediaId, caption);
+  if (row.layout === 'media' && !spec.noCaption && cp.fits) {
+    const r = await editCaption(chatId, mediaId, cp.caption);
     return r.ok ? { ok: true } : failure(r);
   }
   if (row.layout === 'media') {
@@ -210,7 +210,7 @@ async function runEdit(link, m, deadline) {
     const r = await editCaption(chatId, mediaId, '');
     if (!r.ok) return failure(r);
   }
-  const chunks = caption ? formatChunks(caption, [], BALE_TEXT_LIMIT) : [];
+  const chunks = cp.chunks;
   const r = await syncTextParts(chatId, textIds, chunks, row, chunks.length ? 'media+text' : 'media');
   return r.ok ? { ok: true } : failure(r);
 }

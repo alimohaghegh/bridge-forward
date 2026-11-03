@@ -13,6 +13,7 @@ import {
 } from '../lib/eitaa_link.js';
 import { runEitaaDiag, runFmtDiag, runMethodsDiag, runSizeDiag, runEitaaCiProbe, gatewayProbe } from '../lib/eitaa_diag.js';
 import { sendLinkInstructions } from '../lib/start.js';
+import { loadBaleFormat, runBaleFmtDiag } from '../lib/bale_fmt.js';
 import {
   listChannels, saveChannel, setPending, clearPending, activePending, telegramChannelRef,
   checkTelegramChannel, baleChannelRef, checkBaleChannel, telegramChannelTitle, confirmBaleTarget,
@@ -143,6 +144,12 @@ async function handleCommand(cmd, chatId, tgId, user) {
     else if (sub === 'size') await runSizeDiag(extra);
     else if (sub === 'gateway') await reply(chatId, '🌐 ' + JSON.stringify(await gatewayProbe(), null, 1));
     else await runEitaaDiag();
+    return true;
+  }
+
+  if (cmd.name === 'bale_diag' && isOwner(tgId)) {
+    if (cmd.arg.toLowerCase() === 'fmt') await runBaleFmtDiag(chatId);
+    else await reply(chatId, formatProbe(await runBaleProbe(user.baleChatId, '🔧 آزمایش اتصال (از طرف مدیر ربات)')) + '\n\nقالب‌بندی: /bale_diag fmt');
     return true;
   }
 
@@ -281,6 +288,7 @@ async function forward(message, user) {
 }
 
 export default async function (message, ctx) {
+  await loadBaleFormat();
   // Deploy-time setup, reachable only through `tgcloud run` (real updates
   // always carry ctx.update and never this field).
   if (!(ctx && ctx.update) && message && message.__setup === true) return runSetup();

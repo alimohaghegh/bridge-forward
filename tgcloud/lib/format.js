@@ -1,91 +1,146 @@
-// Telegram text formatting → Bale Markdown: bold becomes *text* and italic
-// becomes _text_. Other entities are dropped (plain text).
+// Telegram text + entities → Bale text. Bale has no parse_mode: every text
+// it receives is rendered as Markdown. Documented (docs.bale.ai): bold
+// between asterisks, italic between underscores, each needing a space before
+// the opening and after the closing marker; links as [text](url).
+// Undocumented details (single or double markers, punctuation, captions,
+// how to show a literal marker) come from the owner's /bale_diag fmt answers;
+// until then only links are formatted and everything else is plain.
+//
+// Because Bale parses everything, characters the user typed (*x*, _x_,
+// [a](b), `x`) are escaped so they stay literal: by default a zero-width
+// space (U+200B) after each marker character, or a backslash if the
+// diagnostic showed that works. Auto-detected entities (urls, mentions…) are
+// left untouched so they stay clickable.
 
-const MARKERS = { bold: '*', italic: '_' };
-const WORD_CHAR = /[\p{L}\p{N}]/u;
-const SPACE = /\s/;
+import { AUTO_TYPES, normalizeEntities, trimSpan, chunkRanges } from './entities.js';
 
-// Applies bold/italic entities to `text`. Offsets are UTF-16 units, as in
-// Telegram and JS strings.
-export function toBaleMarkdown(text, entities) {
-  const spans = [];
-  for (const e of entities || []) {
-    const marker = MARKERS[e.type];
-    if (!marker) continue;
-    let start = e.offset;
-    let end = e.offset + e.length;
-    // Bale needs the markers right next to the text: move spaces outside.
-    while (start < end && SPACE.test(text[start])) start++;
-    while (end > start && SPACE.test(text[end - 1])) end--;
-    if (start < end) spans.push({ start, end, marker });
+export const DEFAULT_BALE_FORMAT = {
+  answered: false,
+  bold: null, // '*' | '**' | null
+  italic: null, // '_' | '__' | null
+  link: true,
+  punct: false, // markers work next to punctuation
+  glued: false, // markers work glued to letters
+  zwnj: false, // markers work next to a ZWNJ (نیم‌فاصله)
+  escape: 'zwsp', // 'zwsp' | 'backslash'
+  caption: true, // captions are parsed like texts
+};
+
+let current = DEFAULT_BALE_FORMAT;
+
+export function setBaleFormat(f) {
+  current = { ...DEFAULT_BALE_FORMAT, ...(f || {}) };
+}
+
+export function baleFormat() {
+  return current;
+}
+
+const SPECIAL = /[*_[\]`~]/g;
+
+function escapeLiteral(s, method) {
+  return method === 'backslash' ? s.replace(SPECIAL, '\\$&') : s.replace(SPECIAL, '$&​');
+}
+
+function safeUrl(url) {
+  if (typeof url !== 'string' || !/^https?:\/\/\S+$/i.test(url)) return null;
+  return url.replace(/\(/g, '%28').replace(/\)/g, '%29');
+}
+
+// Picks the spans that can be written as Bale Markdown (Markdown can't nest
+// or overlap them): links first (the URL is information), then bold, then
+// italic. Returns { spans, protect, issues }.
+function baleSpans(text, entities, fmt) {
+  const issues = new Set();
+  const protect = [];
+  const candidates = [];
+  for (const s of normalizeEntities(text, entities)) {
+    if (AUTO_TYPES.has(s.type)) {
+      protect.push(s);
+      continue;
+    }
+    if (s.type === 'text_link' && fmt.link && safeUrl(s.url)) candidates.push({ ...s, prio: 0, href: safeUrl(s.url) });
+    else if (s.type === 'bold' && fmt.bold) candidates.push({ ...s, prio: 1, marker: fmt.bold });
+    else if (s.type === 'italic' && fmt.italic) candidates.push({ ...s, prio: 2, marker: fmt.italic });
+    else issues.add(s.type);
   }
-  if (!spans.length) return text;
+  candidates.sort((a, b) => a.prio - b.prio || a.start - b.start);
 
-  // Inserts per position: closing markers first (inner before outer), then
-  // opening markers (outer before inner).
-  const at = new Map();
-  const add = (pos, kind, span) => {
-    if (!at.has(pos)) at.set(pos, []);
-    at.get(pos).push({ kind, span });
-  };
-  for (const s of spans) {
-    add(s.start, 'open', s);
-    add(s.end, 'close', s);
+  const okChar = (ch) => ch === undefined || /\s/.test(ch) || fmt.glued
+    || (fmt.punct && /[\p{P}\p{S}]/u.test(ch)) || (fmt.zwnj && ch === '‌');
+  const chosen = [];
+  for (const c0 of candidates) {
+    const c = trimSpan(text, c0);
+    if (!c) continue;
+    const clash = chosen.some((s) => c.start < s.end && s.start < c.end);
+    // Links come first, so a marker span next to a link (or another marker
+    // span) is the one that fails the spacing rule.
+    const touches = chosen.some((s) => s.end === c.start || s.start === c.end);
+    const spacing = c.href ? true : okChar(text[c.start - 1]) && okChar(text[c.end]) && !touches;
+    if (clash || !spacing) {
+      issues.add(c.type);
+      continue;
+    }
+    chosen.push(c);
   }
+  chosen.sort((a, b) => a.start - b.start);
+  return { spans: chosen, protect, issues };
+}
 
+// text[a, b) as literal Bale text: escaped, except inside protected ranges.
+function literal(text, a, b, protect, method) {
   let out = '';
-  for (let i = 0; i <= text.length; i++) {
-    const list = at.get(i);
-    if (list) {
-      const closes = list.filter((x) => x.kind === 'close').sort((a, b) => b.span.start - a.span.start);
-      const opens = list.filter((x) => x.kind === 'open').sort((a, b) => b.span.end - a.span.end);
-      let ins = closes.map((x) => x.span.marker).join('');
-      // Markdown markers glued to a letter don't render: keep a space there.
-      if (closes.length && i < text.length && WORD_CHAR.test(text[i]) && !opens.length) ins += ' ';
-      if (opens.length) {
-        if (i > 0 && WORD_CHAR.test(text[i - 1]) && !closes.length) ins += ' ';
-        ins += opens.map((x) => x.span.marker).join('');
-      }
-      out += ins;
-    }
-    if (i < text.length) out += text[i];
+  let pos = a;
+  for (const p of protect) {
+    if (p.end <= pos || p.start >= b) continue;
+    const ps = Math.max(p.start, pos);
+    out += escapeLiteral(text.slice(pos, ps), method);
+    const pe = Math.min(p.end, b);
+    out += text.slice(ps, pe);
+    pos = pe;
   }
-  return out;
+  return out + escapeLiteral(text.slice(pos, b), method);
 }
 
-// Splits text into ranges of at most `max` UTF-16 units, preferring line and
-// word boundaries. Returns [start, end) pairs into the original text.
-export function splitRanges(text, max) {
-  const ranges = [];
-  let pos = 0;
-  while (text.length - pos > max) {
-    const window = text.slice(pos, pos + max);
-    let cut = window.lastIndexOf('\n');
-    if (cut < max * 0.5) cut = window.lastIndexOf(' ');
-    if (cut < max * 0.5) cut = max;
-    // Never split a surrogate pair.
-    const code = text.charCodeAt(pos + cut - 1);
-    if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
-    ranges.push([pos, pos + cut]);
-    pos += cut;
-    if (text[pos] === '\n' || text[pos] === ' ') pos++;
+function renderRange(text, sel, from, to, withFormat) {
+  const { spans, protect } = sel;
+  const method = current.escape;
+  let out = '';
+  let pos = from;
+  if (withFormat) {
+    for (const s0 of spans) {
+      if (s0.end <= from || s0.start >= to) continue;
+      const s = trimSpan(text, { ...s0, start: Math.max(s0.start, from), end: Math.min(s0.end, to) });
+      if (!s) continue;
+      out += literal(text, pos, s.start, protect, method);
+      const inner = literal(text, s.start, s.end, protect, method);
+      out += s.href ? `[${inner}](${s.href})` : s.marker + inner + s.marker;
+      pos = s.end;
+    }
   }
-  if (pos < text.length) ranges.push([pos, text.length]);
-  return ranges;
+  return out + literal(text, pos, to, protect, method);
 }
 
-// Chunks of `text` (each from at most `max` source characters) as
-// { text, plain }: Bale Markdown, and the same chunk without formatting
-// (a fallback if Bale refuses the Markdown).
-export function formatChunks(text, entities, max) {
-  return splitRanges(text, max).map(([start, end]) => {
-    const local = [];
-    for (const e of entities || []) {
-      const s = Math.max(e.offset, start);
-      const t = Math.min(e.offset + e.length, end);
-      if (s < t) local.push({ type: e.type, offset: s - start, length: t - s });
-    }
-    const plain = text.slice(start, end);
-    return { text: toBaleMarkdown(plain, local), plain };
-  });
+// Text (or caption, with { caption: true }) → chunks of at most `max`
+// characters as sent: [{ text, plain }] where `plain` is the same chunk
+// without formatting (sent if Bale refuses the first). Also `issues`.
+export function baleChunks(text, entities, max, { caption } = {}) {
+  text = String(text || '');
+  const fmt = caption && !current.caption ? { ...current, link: false, bold: null, italic: null } : current;
+  const sel = baleSpans(text, entities, fmt);
+  const chunks = chunkRanges(text, max, (from, to) => {
+    const out = renderRange(text, sel, from, to, true);
+    return { text: out, size: out.length };
+  }).map((c) => ({ text: c.text, plain: renderRange(text, sel, c.from, c.to, false) }));
+  return { chunks, issues: sel.issues };
+}
+
+export function formatChunks(text, entities, max, opts) {
+  return baleChunks(text, entities, max, opts).chunks;
+}
+
+// The whole text as one Bale string.
+export function toBaleMarkdown(text, entities, opts) {
+  const c = formatChunks(text, entities, Number.MAX_SAFE_INTEGER, opts)[0];
+  return c ? c.text : '';
 }

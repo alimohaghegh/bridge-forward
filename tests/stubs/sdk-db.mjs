@@ -1,0 +1,14 @@
+export const sql = Object.assign((s, ...v) => ({ s, v }), { raw: (x) => ({ raw: x }) });
+const col = () => { const c = { primaryKey: () => c, notNull: () => c, default: () => c, unique: () => c }; return c; };
+export const table = (n) => ({ n });
+export const integer = col;
+export const text = col;
+export const boolean = col;
+export const index = () => ({ on: () => ({}) });
+export const uniqueIndex = index;
+export const eq = () => 0;
+export const and = () => 0;
+export const gt = () => 0;
+export const isNull = () => 0;
+export const desc = () => 0;
+export default {};

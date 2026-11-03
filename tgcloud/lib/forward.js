@@ -6,7 +6,7 @@
 
 import { api, InputFile, BotApiError } from 'sdk';
 import { baleCall, classifyError } from './bale.js';
-import { formatChunks, toBaleMarkdown } from './format.js';
+import { formatChunks } from './format.js';
 import { MAX_FILE_BYTES } from './util.js';
 
 // Bale accepts 1–4096 characters for text; keep a margin for the markers.
@@ -58,8 +58,15 @@ export function isSupported(m) {
   );
 }
 
-export function captionOf(m) {
-  return m.caption ? toBaleMarkdown(m.caption, m.caption_entities) : '';
+// A media message's caption for Bale: { caption } when it fits as a
+// caption, and always `chunks` — the same caption as text messages (for
+// captions that are too long, or media that can't carry one).
+export function captionParts(m) {
+  if (!m.caption) return { caption: '', fits: true, chunks: [] };
+  const opts = { caption: true };
+  const whole = formatChunks(m.caption, m.caption_entities, Number.MAX_SAFE_INTEGER, opts)[0];
+  const caption = whole ? whole.text : '';
+  return { caption, fits: caption.length <= BALE_CAPTION_LIMIT, chunks: formatChunks(m.caption, m.caption_entities, BALE_TEXT_LIMIT, opts) };
 }
 
 // ── Plans ───────────────────────────────────────────────────────────────────
@@ -74,9 +81,8 @@ function textOps(tg, text, entities) {
   return formatChunks(text, entities, BALE_TEXT_LIMIT).map((c) => ({ op: 'text', tg, text: c.text, plain: c.plain }));
 }
 
-// Already formatted text (a caption that didn't fit), split plainly.
-function formattedTextOps(tg, text) {
-  return formatChunks(text, [], BALE_TEXT_LIMIT).map((c) => ({ op: 'text', tg, text: c.text }));
+function chunkOps(tg, chunks) {
+  return chunks.map((c) => ({ op: 'text', tg, text: c.text, plain: c.plain }));
 }
 
 function newPlan() {
@@ -92,20 +98,20 @@ export function planMessage(m) {
     plan.ops.push(...textOps(tg, m.text, m.entities));
     plan.layout[tg] = 'text';
   } else if (spec) {
-    const caption = captionOf(m);
-    if (spec.noCaption || caption.length > BALE_CAPTION_LIMIT) {
+    const cp = captionParts(m);
+    if (spec.noCaption || !cp.fits) {
       plan.ops.push({ op: 'media', tg, spec, caption: '' });
-      if (caption) plan.ops.push(...formattedTextOps(tg, caption));
-      plan.layout[tg] = caption ? 'media+text' : 'media';
+      if (cp.chunks.length) plan.ops.push(...chunkOps(tg, cp.chunks));
+      plan.layout[tg] = cp.chunks.length ? 'media+text' : 'media';
     } else {
-      plan.ops.push({ op: 'media', tg, spec, caption });
+      plan.ops.push({ op: 'media', tg, spec, caption: cp.caption });
       plan.layout[tg] = 'media';
     }
     plan.fileUid[tg] = spec.fileUid;
   } else if (m.location) {
     plan.ops.push({ op: 'location', tg, latitude: m.location.latitude, longitude: m.location.longitude });
     if (m.venue && m.venue.title) {
-      plan.ops.push(...formattedTextOps(tg, [m.venue.title, m.venue.address].filter(Boolean).join('\n')));
+      plan.ops.push(...textOps(tg, [m.venue.title, m.venue.address].filter(Boolean).join('\n'), []));
     }
     plan.layout[tg] = 'other';
   } else if (m.contact) {
@@ -124,24 +130,23 @@ export function planMessage(m) {
 export function albumItemOf(m) {
   const spec = mediaSpec(m);
   if (!spec || !ALBUM_TYPES.has(spec.kind)) return null;
-  return { tg: m.message_id, spec, caption: captionOf(m) };
+  const cp = captionParts(m);
+  return { tg: m.message_id, spec, caption: cp.fits ? cp.caption : '', overflow: cp.fits ? [] : cp.chunks };
 }
 
 // Plan for album items: one sendMediaGroup, then any captions too long for it.
 export function planAlbum(items) {
   const plan = newPlan();
   items = items.slice().sort((a, b) => a.tg - b.tg);
-  const groupItems = items.map((it) => ({
-    tg: it.tg, spec: it.spec, caption: it.caption.length <= BALE_CAPTION_LIMIT ? it.caption : '',
-  }));
+  const groupItems = items.map((it) => ({ tg: it.tg, spec: it.spec, caption: it.caption }));
   plan.ops.push(items.length > 1
     ? { op: 'group', tg: items[0].tg, items: groupItems }
     : { op: 'media', tg: items[0].tg, spec: items[0].spec, caption: groupItems[0].caption });
   for (const it of items) {
     plan.layout[it.tg] = 'media';
     plan.fileUid[it.tg] = it.spec.fileUid;
-    if (it.caption.length > BALE_CAPTION_LIMIT) {
-      plan.ops.push(...formattedTextOps(it.tg, it.caption));
+    if (it.overflow && it.overflow.length) {
+      plan.ops.push(...chunkOps(it.tg, it.overflow));
       plan.layout[it.tg] = 'media+text';
     }
   }

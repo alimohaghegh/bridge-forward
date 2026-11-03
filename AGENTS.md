@@ -168,7 +168,7 @@ The platform manages the bot's webhook for you, derived from your deployed
   (`lib/channels.js`; a code posted in the Bale chat proves access).
   Posts, edits and deletions go through a durable ordered queue
   (`lib/mirror.js`, table `outbox`) that keeps each job until Bale accepts it;
-  `.github/workflows/drain.yml` re-runs it every 30 min (`__drain`).
+  `.github/workflows/drain.yml` re-runs it every 5 min (`__drain`, Bale and Eitaa).
   Deleted posts are found by probing `editMessageReplyMarkup` ("message to
   edit not found"). Raw SELECTs must use `db.all`/`db.get`, not `db.run`.
 - Albums: one update per item; `lib/album.js` collects them in the DB and the
@@ -176,6 +176,14 @@ The platform manages the bot's webhook for you, derived from your deployed
 - Privacy: never store or log message contents; only ids, state, counters
   (album items are the one exception: held seconds, then deleted).
 - All user-facing texts are Persian and live in `lib/texts.js`.
+- Formatting: `lib/entities.js` is the shared entity core (UTF-16, nesting,
+  chunking). Eitaa (`eitaa_html.js`) emits only b/i/code/a (verified live);
+  Bale (`format.js`) has no parse_mode — everything is Markdown — so links
+  are `[text](url)`, bold/italic only per the owner's `/bale_diag fmt`
+  answers (settings key `bale_fmt`, loaded by `loadBaleFormat()` at the
+  start of each handler), and typed markers are escaped (ZWSP by default).
+- `npm test` (node:test, `tests/`, SDK stubbed by `tests/register.mjs`)
+  runs in the deploy workflow before anything is pushed.
 - `/start` shows one main menu (`lib/eitaa_link.js` showMenu); its first
   button runs the old Bale /start (`lib/start.js`). All old commands remain.
 - Eitaa: Telegram channel → Eitaa channel via EitaaYar (`lib/eitaa.js`,

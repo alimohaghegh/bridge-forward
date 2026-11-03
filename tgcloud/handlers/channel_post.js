@@ -5,6 +5,7 @@
 
 import { api } from 'sdk';
 import { safeErrorText } from '../lib/bale.js';
+import { loadBaleFormat } from '../lib/bale_fmt.js';
 import { isAlbumItem, collectAlbum } from '../lib/album.js';
 import { getChannel, telegramChannelTitle } from '../lib/channels.js';
 import { alreadyQueued, enqueuePost, enqueueAlbum, drain } from '../lib/mirror.js';
@@ -50,5 +51,6 @@ async function mirrorToEitaa(post, started) {
 export default async function (post) {
   const started = Date.now();
   if (!post || !post.chat || post.chat.type !== 'channel') return;
+  await loadBaleFormat();
   await Promise.all([mirrorToBale(post, started), mirrorToEitaa(post, started)]);
 }

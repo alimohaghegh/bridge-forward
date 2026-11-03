@@ -3,6 +3,7 @@
 // for Eitaa the owner is told what to edit (EitaaYar has no edit method).
 
 import { safeErrorText } from '../lib/bale.js';
+import { loadBaleFormat } from '../lib/bale_fmt.js';
 import { getChannel } from '../lib/channels.js';
 import { enqueueEdit, drain } from '../lib/mirror.js';
 import { mirrorEdit } from '../lib/eitaa_mirror.js';
@@ -31,5 +32,6 @@ async function editInEitaa(post) {
 export default async function (post) {
   const started = Date.now();
   if (!post || !post.chat || post.chat.type !== 'channel') return;
+  await loadBaleFormat();
   await Promise.all([editInBale(post, started), editInEitaa(post)]);
 }
