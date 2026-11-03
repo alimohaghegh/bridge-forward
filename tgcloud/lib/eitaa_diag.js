@@ -10,7 +10,7 @@ import {
   SHARED_TOKEN, RELAY_URL, relayEnabled, eitaaCallOnce, eitaaCall, channelToken, describeFailure, messageIdOf, redact,
   getSetting, updateCaps, eitaaCaps, webCryptoAvailable, simpleModeEnabled, advancedModeEnabled,
 } from './eitaa.js';
-import { channelRow } from './eitaa_mirror.js';
+import { channelRow, refetch, buildParts } from './eitaa_mirror.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { now, sleep } from './util.js';
 
@@ -459,6 +459,31 @@ async function relayPing() {
   } catch (e) {
     return { ok: false, ms: Date.now() - t, error: redact(e && e.message).slice(0, 100) };
   }
+}
+
+// CI probe (__eitaa_render): the owner's last mirrored post, re-read from
+// Telegram, and what the bot builds from it — as structure only: entity
+// types/offsets and the parts with every letter and digit masked.
+export async function runEitaaRender() {
+  const row = await db.get(sql`
+    SELECT p.tg_channel_id AS ch, p.tg_message_id AS id FROM eitaa_posts p
+    JOIN eitaa_channels c ON c.tg_channel_id = p.tg_channel_id
+    WHERE c.owner_tg_id = ${OWNER_TELEGRAM_ID} AND p.kind = 'post' AND p.status IN ('done', 'partial')
+    ORDER BY p.tg_message_id DESC LIMIT 1`);
+  if (!row) return { ok: false, error: 'no post' };
+  const ch = channelRow(await db.get(sql`SELECT * FROM eitaa_channels WHERE tg_channel_id = ${row.ch}`));
+  const f = await refetch(ch, Number(row.id));
+  if (!f.ok) return { ok: false, refetch: f };
+  const m = f.message;
+  const mask = (t) => String(t || '').replace(/[\p{L}\p{N}]/gu, 'x');
+  const { parts, issues } = buildParts(m, await eitaaCaps(), { link: 'L' });
+  return {
+    ok: true, id: row.id, textLength: (m.text || m.caption || '').length,
+    textShape: mask(m.text || m.caption),
+    entities: (m.entities || m.caption_entities || []).map((e) => `${e.type}@${e.offset}+${e.length}`),
+    parts: parts.map((p) => ({ type: p.type, html: p.html, shape: mask(p.text || (p.caption && p.caption.text)) })),
+    issues: [...issues],
+  };
 }
 
 // CI probe (__eitaa_state): stored findings and the outcome of the owner's

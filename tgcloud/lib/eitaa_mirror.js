@@ -362,7 +362,7 @@ async function sendPost(ch, token, m, row, caps, deadline) {
 }
 
 // The post as it is now, read back from Telegram (see the top comment).
-async function refetch(ch, tgMessageId) {
+export async function refetch(ch, tgMessageId) {
   let fwd;
   try {
     fwd = await api.forwardMessage({
