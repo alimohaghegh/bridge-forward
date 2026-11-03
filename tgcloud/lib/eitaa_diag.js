@@ -488,25 +488,30 @@ async function relayPing() {
 // Telegram, and what the bot builds from it — as structure only: entity
 // types/offsets and the parts with every letter and digit masked.
 export async function runEitaaRender() {
-  const row = await db.get(sql`
+  const rows = await db.all(sql`
     SELECT p.tg_channel_id AS ch, p.tg_message_id AS id FROM eitaa_posts p
     JOIN eitaa_channels c ON c.tg_channel_id = p.tg_channel_id
-    WHERE c.owner_tg_id = ${OWNER_TELEGRAM_ID} AND p.kind = 'post' AND p.status IN ('done', 'partial')
-    ORDER BY p.tg_message_id DESC LIMIT 1`);
-  if (!row) return { ok: false, error: 'no post' };
-  const ch = channelRow(await db.get(sql`SELECT * FROM eitaa_channels WHERE tg_channel_id = ${row.ch}`));
-  const f = await refetch(ch, Number(row.id));
-  if (!f.ok) return { ok: false, refetch: f };
-  const m = f.message;
+    WHERE c.owner_tg_id = ${OWNER_TELEGRAM_ID} AND p.status IN ('done', 'partial')
+    ORDER BY p.tg_message_id DESC LIMIT 5`);
   const mask = (t) => String(t || '').replace(/[\p{L}\p{N}]/gu, 'x');
-  const { parts, issues } = buildParts(m, await eitaaCaps(), { link: 'L' });
-  return {
-    ok: true, id: row.id, textLength: (m.text || m.caption || '').length,
-    textShape: mask(m.text || m.caption),
-    entities: (m.entities || m.caption_entities || []).map((e) => `${e.type}@${e.offset}+${e.length}`),
-    parts: parts.map((p) => ({ type: p.type, html: p.html, shape: mask(p.text || (p.caption && p.caption.text)) })),
-    issues: [...issues],
-  };
+  const out = [];
+  for (const row of rows) {
+    const ch = channelRow(await db.get(sql`SELECT * FROM eitaa_channels WHERE tg_channel_id = ${row.ch}`));
+    const f = await refetch(ch, Number(row.id));
+    if (!f.ok) {
+      out.push({ id: row.id, refetch: f });
+      continue;
+    }
+    const m = f.message;
+    const { parts, issues } = buildParts(m, await eitaaCaps(), { link: 'L' });
+    out.push({
+      id: row.id, media: Boolean(m.photo || m.video || m.document), textShape: mask(m.text || m.caption),
+      entities: (m.entities || m.caption_entities || []).map((e) => `${e.type}@${e.offset}+${e.length}`),
+      parts: parts.map((p) => ({ type: p.type, html: p.html || (p.caption && p.caption.html), shape: mask(p.text || (p.caption && p.caption.text)) })),
+      issues: [...issues],
+    });
+  }
+  return out;
 }
 
 // CI probe (__eitaa_resend): sends the owner's last mirrored post again
