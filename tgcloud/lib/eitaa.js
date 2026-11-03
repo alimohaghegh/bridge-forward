@@ -11,6 +11,7 @@ import { fetch, FormData, db } from 'sdk';
 import { sql } from 'sdk/db';
 import * as CONFIG from './config.js';
 import { now } from './util.js';
+import { privateScalarFromPkcs8, signP256 } from './p256.js';
 
 const DIRECT = 'https://eitaayar.ir';
 const NETWORK_RETRY_MS = 9000;
@@ -27,18 +28,15 @@ export function relayEnabled() {
   return Boolean(RELAY_URL && RELAY_KEY);
 }
 
-let relayKeyPromise = null;
+let relayScalar = null;
 
 // Headers proving the request comes from this bot.
 async function relayHeaders(path) {
-  const s = globalThis.crypto && globalThis.crypto.subtle;
-  if (!s) throw new Error('relay: no WebCrypto');
-  if (!relayKeyPromise) {
-    relayKeyPromise = s.importKey('pkcs8', fromBase64(RELAY_KEY), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
-  }
+  if (!relayScalar) relayScalar = privateScalarFromPkcs8(fromBase64(RELAY_KEY));
+  if (!relayScalar) throw new Error('relay: bad EITAA_RELAY_KEY');
   const ts = String(now());
-  const sig = await s.sign({ name: 'ECDSA', hash: 'SHA-256' }, await relayKeyPromise, utf8Encode(ts + '\n' + path));
-  return { 'x-relay-ts': ts, 'x-relay-sig': toBase64(new Uint8Array(sig)) };
+  const sig = await signP256(relayScalar, utf8Encode(ts + '\n' + path));
+  return { 'x-relay-ts': ts, 'x-relay-sig': toBase64(sig) };
 }
 
 // Simple mode needs the shared token and the operator's Eitaa account;
