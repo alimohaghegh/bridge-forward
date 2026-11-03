@@ -4,6 +4,10 @@ name: Bale diagnostics
 # owner's linked Bale chat). Deploys nothing; prints timings and error codes only.
 on:
   workflow_dispatch:
+    inputs:
+      probe:
+        description: 'Payload flag to run (__diag or __probe)'
+        default: '__diag'
 
 permissions:
   contents: read
@@ -34,10 +38,16 @@ jobs:
       - name: Fetch cloud state
         run: npx tgcloud fetch
 
-      - name: Probe Bale (run 1)
+      - name: Probe (run 1)
+        env:
+          PROBE: ${{ inputs.probe }}
         run: |
-          npx tgcloud run handlers/message '{ __diag: true }' || true
+          case "$PROBE" in __diag|__probe) ;; *) echo "unknown probe"; exit 1;; esac
+          npx tgcloud run handlers/message "{ $PROBE: true }" || true
 
-      - name: Probe Bale (run 2)
+      - name: Probe (run 2)
+        env:
+          PROBE: ${{ inputs.probe }}
         run: |
-          npx tgcloud run handlers/message '{ __diag: true }' || true
+          case "$PROBE" in __diag|__probe) ;; *) echo "unknown probe"; exit 1;; esac
+          npx tgcloud run handlers/message "{ $PROBE: true }" || true

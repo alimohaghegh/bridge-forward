@@ -14,7 +14,7 @@ import {
 } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
-import { runDiag, runBaleProbe, formatProbe } from '../lib/diag.js';
+import { runDiag, runBaleProbe, formatProbe, runDeleteProbe } from '../lib/diag.js';
 import {
   touchUser, getUser, clearLink, claimMessage, maybeCleanup, countDelivery, isOwner,
   recordBaleSuccess, recordBaleFailure,
@@ -250,6 +250,7 @@ export default async function (message, ctx) {
   // always carry ctx.update and never this field).
   if (!(ctx && ctx.update) && message && message.__setup === true) return runSetup();
   if (!(ctx && ctx.update) && message && message.__diag === true) return runDiag();
+  if (!(ctx && ctx.update) && message && message.__probe === true) return runDeleteProbe();
 
   if (!message || !message.chat || message.chat.type !== 'private' || !message.from || message.from.is_bot) return;
   const chatId = message.chat.id;

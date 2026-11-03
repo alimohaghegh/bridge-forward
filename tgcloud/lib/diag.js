@@ -2,6 +2,8 @@
 // (`npx tgcloud run handlers/message '{ __diag: true }'`).
 // Reports per-attempt outcome and timing only: no tokens, ids or contents.
 
+import { api, db } from 'sdk';
+import { sql } from 'sdk/db';
 import { baleCallOnce, safeErrorText } from './bale.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { getUser } from './store.js';
@@ -59,4 +61,25 @@ export function formatProbe(report) {
     'sendMessage:', ...(report.sendMessage.length ? report.sendMessage.map(line) : ['—']),
     `total: ${report.totalMs}ms`,
   ].join('\n');
+}
+
+// Can deleted channel posts be detected? editMessageReplyMarkup without a
+// markup on a post that has none: "not modified" = exists, "not found" = gone.
+export async function runDeleteProbe() {
+  const ch = await db.get(sql`SELECT tg_channel_id AS id FROM channels LIMIT 1`);
+  if (!ch) return { ok: false, error: 'no channel' };
+  const last = await db.get(sql`SELECT max(message_id) AS mid FROM delivered WHERE chat_id = ${ch.id}`);
+  const out = {};
+  const me = await api.getMe();
+  const bot = await api.getChatMember({ chat_id: ch.id, user_id: me.id }).catch(() => null);
+  out.botRights = bot && { status: bot.status, edit: bot.can_edit_messages, del: bot.can_delete_messages, post: bot.can_post_messages };
+  for (const [name, mid] of [['existing', last && last.mid], ['missing', ((last && last.mid) || 1) + 100000]]) {
+    try {
+      await api.editMessageReplyMarkup({ chat_id: ch.id, message_id: mid });
+      out[name] = 'ok';
+    } catch (e) {
+      out[name] = `${e.code}: ${e.description}`;
+    }
+  }
+  return out;
 }
