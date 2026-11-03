@@ -10,9 +10,9 @@
 import { db } from 'sdk';
 import { sql } from 'sdk/db';
 import { albumItemOf } from './forward.js';
-import { rowsOf } from './util.js';
+import { rowsOf, DB_NOW_MS } from './util.js';
 
-const QUIET_MS = 1800;
+const QUIET_MS = 2500;
 const MAX_WAIT_MS = 6000;
 const MAX_ITEMS = 10;
 const RETENTION_MS = 10 * 60 * 1000;
@@ -29,11 +29,15 @@ export async function collectAlbum(m) {
   const key = `${chatId}:${m.media_group_id}`;
   const t = Date.now();
 
+  // Arrival times come from the database's clock: items arrive in runs on
+  // different machines, whose clocks were seen more than a minute apart
+  // (the album was then closed early or "rescued" mid-collection, and Bale
+  // got it in pieces, out of order).
   await db.run(sql`
     INSERT OR IGNORE INTO album_items (key, chat_id, message_id, created_ms, item)
-    VALUES (${key}, ${chatId}, ${m.message_id}, ${t}, ${JSON.stringify(item)})`);
+    VALUES (${key}, ${chatId}, ${m.message_id}, ${DB_NOW_MS}, ${JSON.stringify(item)})`);
   const leader = rowsOf(await db.run(sql`
-    INSERT OR IGNORE INTO albums (key, created_ms) VALUES (${key}, ${t}) RETURNING key`)).length > 0;
+    INSERT OR IGNORE INTO albums (key, created_ms) VALUES (${key}, ${DB_NOW_MS}) RETURNING key`)).length > 0;
 
   if (!leader) {
     const album = await db.get(sql`SELECT closed FROM albums WHERE key = ${key}`);
@@ -49,8 +53,8 @@ export async function collectAlbum(m) {
   // Leader: wait for the rest of the album.
   while (Date.now() - t < MAX_WAIT_MS) {
     const s = await db.get(sql`
-      SELECT count(*) AS n, max(created_ms) AS last FROM album_items WHERE key = ${key}`);
-    if (s.n >= MAX_ITEMS || Date.now() - s.last >= QUIET_MS) break;
+      SELECT count(*) AS n, max(created_ms) AS last, ${DB_NOW_MS} AS now FROM album_items WHERE key = ${key}`);
+    if (s.n >= MAX_ITEMS || s.now - s.last >= QUIET_MS) break;
   }
   await db.run(sql`UPDATE albums SET closed = 1 WHERE key = ${key}`);
   const rows = rowsOf(await db.run(sql`
@@ -67,10 +71,9 @@ export async function releaseAlbumItems(chatId, items) {
 // Album items of `chatId` left behind by a run that was cut off (older than
 // `olderThanMs`), taken and grouped per album: [[items], …].
 export async function takeStaleAlbums(chatId, olderThanMs) {
-  const cutoff = Date.now() - olderThanMs;
   const rows = rowsOf(await db.run(sql`
     UPDATE album_items SET taken = 1
-    WHERE chat_id = ${chatId} AND created_ms < ${cutoff}
+    WHERE chat_id = ${chatId} AND created_ms < ${DB_NOW_MS} - ${olderThanMs}
     RETURNING key, item`));
   const groups = new Map();
   for (const row of rows) {
@@ -92,9 +95,8 @@ export async function albumPending(chatId, beforeTg) {
 // Drops leftovers of private-chat albums that were never sent (a run was
 // cut off). Channel albums are never dropped: the mirror queue rescues them.
 export async function cleanupAlbums() {
-  const cutoff = Date.now() - RETENTION_MS;
-  await db.run(sql`DELETE FROM album_items WHERE chat_id > 0 AND created_ms < ${cutoff}`);
+  await db.run(sql`DELETE FROM album_items WHERE chat_id > 0 AND created_ms < ${DB_NOW_MS} - ${RETENTION_MS}`);
   await db.run(sql`
-    DELETE FROM albums WHERE created_ms < ${cutoff}
+    DELETE FROM albums WHERE created_ms < ${DB_NOW_MS} - ${RETENTION_MS}
       AND NOT EXISTS (SELECT 1 FROM album_items i WHERE i.key = albums.key)`);
 }

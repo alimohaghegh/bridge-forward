@@ -1,5 +1,7 @@
 // Small helpers shared by handlers and lib modules.
 
+import { sql } from 'sdk/db';
+
 export const BALE_BOT_USERNAME = 'bridgeforward_bot';
 export const TELEGRAM_BOT_USERNAME = 'bridgeforward_bot';
 
@@ -9,6 +11,12 @@ export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export function now() {
   return Math.floor(Date.now() / 1000);
 }
+
+// The database's clock, for times that runs compare with each other (locks,
+// leases, "album quiet", "stale"): the machines running the bot were seen
+// with clocks more than a minute apart, the database has one clock.
+export const DB_NOW = sql.raw("CAST(strftime('%s','now') AS INTEGER)");
+export const DB_NOW_MS = sql.raw("CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)");
 
 // Resolves true after `ms`, or false right away when the runtime has no timer.
 export async function sleep(ms) {

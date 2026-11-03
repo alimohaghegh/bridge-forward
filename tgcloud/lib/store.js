@@ -4,7 +4,7 @@ import { db, api } from 'sdk';
 import { eq, sql } from 'sdk/db';
 import { users, baleState } from '../schema.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
-import { now, rowsOf } from './util.js';
+import { now, rowsOf, DB_NOW } from './util.js';
 import { cleanupAlbums } from './album.js';
 
 const DELIVERED_RETENTION_SECONDS = 3 * 24 * 3600;
@@ -92,9 +92,8 @@ export async function getBaleState() {
 // A short lock so two button presses don't poll Bale at the same time.
 export async function acquirePollLock(seconds) {
   await ensureStateRow();
-  const t = now();
   const r = await db.run(
-    sql`UPDATE bale_state SET lock_until = ${t + seconds} WHERE id = 1 AND lock_until < ${t} RETURNING id`
+    sql`UPDATE bale_state SET lock_until = ${DB_NOW} + ${seconds} WHERE id = 1 AND lock_until < ${DB_NOW} RETURNING id`
   );
   return rowsOf(r).length > 0;
 }

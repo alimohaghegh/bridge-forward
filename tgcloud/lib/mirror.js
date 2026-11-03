@@ -26,7 +26,7 @@ import { getChannel, countChannelDelivery, telegramChannelTitle } from './channe
 import { recordBaleSuccess, recordBaleFailure, noteError } from './store.js';
 import { getSetting, setSetting } from './eitaa.js';
 import { T } from './texts.js';
-import { now, rowsOf, deletedPostAnswer } from './util.js';
+import { now, rowsOf, deletedPostAnswer, DB_NOW } from './util.js';
 
 const LOCK_SECONDS = 40;
 const PERMANENT = new Set(['too_large', 'download', 'unsupported', 'rejected']);
@@ -288,10 +288,9 @@ function newToken() {
 }
 
 async function acquire(tgChannelId, token) {
-  const t = now();
   const rows = rowsOf(await db.run(sql`
-    UPDATE channels SET lock_until = ${t + LOCK_SECONDS}, lock_owner = ${token}
-    WHERE tg_channel_id = ${tgChannelId} AND lock_until < ${t}
+    UPDATE channels SET lock_until = ${DB_NOW} + ${LOCK_SECONDS}, lock_owner = ${token}
+    WHERE tg_channel_id = ${tgChannelId} AND lock_until < ${DB_NOW}
     RETURNING lock_owner`));
   const ok = rows.length > 0 && rows[0].lock_owner === token;
   if (ok) await dbg(tgChannelId, 'acquire', 0);
@@ -306,10 +305,9 @@ async function release(tgChannelId, token) {
 
 // Leases one job to this run (a second safety net next to the lock).
 async function leaseJob(job, token) {
-  const t = now();
   const rows = rowsOf(await db.run(sql`
-    UPDATE outbox SET lease_owner = ${token}, lease_until = ${t + LOCK_SECONDS}
-    WHERE id = ${job.id} AND (lease_until < ${t} OR lease_owner = ${token})
+    UPDATE outbox SET lease_owner = ${token}, lease_until = ${DB_NOW} + ${LOCK_SECONDS}
+    WHERE id = ${job.id} AND (lease_until < ${DB_NOW} OR lease_owner = ${token})
     RETURNING lease_owner`));
   return rows.length > 0 && rows[0].lease_owner === token;
 }
@@ -402,8 +400,8 @@ export const probeStats = { runs: 0, checked: 0, gone: 0 };
 async function probeDeletions(link, deadline, force) {
   const t = now();
   const claimed = rowsOf(await db.run(sql`
-    UPDATE channels SET probed_at = ${t}
-    WHERE tg_channel_id = ${link.tgChannelId} AND (${force ? 1 : 0} = 1 OR probed_at < ${t - PROBE_INTERVAL_SECONDS})
+    UPDATE channels SET probed_at = ${DB_NOW}
+    WHERE tg_channel_id = ${link.tgChannelId} AND (${force ? 1 : 0} = 1 OR probed_at < ${DB_NOW} - ${PROBE_INTERVAL_SECONDS})
     RETURNING probed_at`));
   if (!claimed.length) return 0;
   probeStats.runs++;

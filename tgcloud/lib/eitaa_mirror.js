@@ -22,7 +22,7 @@ import {
   eitaaCall, classifyEitaa, isTemporary, messageIdOf, eitaaCaps, channelToken, describeFailure,
 } from './eitaa.js';
 import { toEitaaChunks, toEitaaCaption } from './eitaa_html.js';
-import { MAX_FILE_BYTES, now, rowsOf, sleep, deletedPostAnswer } from './util.js';
+import { MAX_FILE_BYTES, now, rowsOf, sleep, deletedPostAnswer, DB_NOW } from './util.js';
 import { E } from './texts.js';
 
 const LOCK_SECONDS = 40;
@@ -401,18 +401,17 @@ function newToken() {
 async function acquire(tgChannelId, waitMs, token) {
   const until = Date.now() + waitMs;
   for (;;) {
-    const t = now();
     const rows = rowsOf(await db.run(sql`
-      UPDATE eitaa_channels SET lock_until = ${t + LOCK_SECONDS}, lock_owner = ${token}
-      WHERE tg_channel_id = ${tgChannelId} AND lock_until < ${t}
+      UPDATE eitaa_channels SET lock_until = ${DB_NOW} + ${LOCK_SECONDS}, lock_owner = ${token}
+      WHERE tg_channel_id = ${tgChannelId} AND lock_until < ${DB_NOW}
       RETURNING lock_owner`));
     if (rows.length && rows[0].lock_owner === token) return true;
     if (Date.now() >= until) return false;
     // No timers on the platform: wait by reading until the lock is free.
     while (Date.now() < until) {
       if (await sleep(250)) break;
-      const row = await db.get(sql`SELECT lock_until FROM eitaa_channels WHERE tg_channel_id = ${tgChannelId}`);
-      if (!row || row.lock_until < now()) break;
+      const row = await db.get(sql`SELECT lock_until < ${DB_NOW} AS free FROM eitaa_channels WHERE tg_channel_id = ${tgChannelId}`);
+      if (!row || row.free) break;
     }
   }
 }
@@ -426,10 +425,9 @@ async function release(tgChannelId, token) {
 // A post's own claim, taken just before it is sent: even if two runs ever
 // overlapped, only one of them sends it.
 async function leasePost(tgChannelId, tgMessageId) {
-  const t = now();
   return rowsOf(await db.run(sql`
-    UPDATE eitaa_posts SET lease_until = ${t + LOCK_SECONDS}
-    WHERE tg_channel_id = ${tgChannelId} AND tg_message_id = ${tgMessageId} AND status = 'queued' AND lease_until < ${t}
+    UPDATE eitaa_posts SET lease_until = ${DB_NOW} + ${LOCK_SECONDS}
+    WHERE tg_channel_id = ${tgChannelId} AND tg_message_id = ${tgMessageId} AND status = 'queued' AND lease_until < ${DB_NOW}
     RETURNING tg_message_id`)).length > 0;
 }
 
@@ -721,8 +719,8 @@ export async function sweepDeletions(tgChannelId, { deadline, force } = {}) {
   deadline = deadline || Date.now() + 8000;
   const t = now();
   const claimed = await db.run(sql`
-    UPDATE eitaa_channels SET probed_at = ${t}
-    WHERE tg_channel_id = ${tgChannelId} AND (${force ? 1 : 0} = 1 OR probed_at < ${t - PROBE_INTERVAL_SECONDS})
+    UPDATE eitaa_channels SET probed_at = ${DB_NOW}
+    WHERE tg_channel_id = ${tgChannelId} AND (${force ? 1 : 0} = 1 OR probed_at < ${DB_NOW} - ${PROBE_INTERVAL_SECONDS})
     RETURNING probed_at`);
   if (!rowsOf(claimed).length) return -1;
   const ch = await getEitaaChannel(tgChannelId);
