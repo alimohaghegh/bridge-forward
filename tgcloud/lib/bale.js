@@ -81,8 +81,9 @@ async function logged(callId, attempt, method, params, files, viaRelay) {
   if (LOGGED.test(method)) {
     try {
       await db.run(sql`
-        INSERT INTO bale_calls (at_ms, call_id, attempt, method, ms, via, ok, network, code)
-        VALUES (${t}, ${callId}, ${attempt}, ${method}, ${Date.now() - t}, ${r.via || null}, ${r.ok ? 1 : 0}, ${r.network ? 1 : 0}, ${r.error_code || null})`);
+        INSERT INTO bale_calls (at_ms, call_id, attempt, method, ms, via, ok, network, code, chat_id, result_id)
+        VALUES (${t}, ${callId}, ${attempt}, ${method}, ${Date.now() - t}, ${r.via || null}, ${r.ok ? 1 : 0}, ${r.network ? 1 : 0},
+          ${r.error_code || null}, ${Number(params && params.chat_id) || null}, ${(r.ok && r.result && r.result.message_id) || null})`);
       if (Math.random() < 0.05) await db.run(sql`DELETE FROM bale_calls WHERE id < (SELECT max(id) - 400 FROM bale_calls)`);
     } catch {
       // Diagnosis only.

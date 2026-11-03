@@ -1,0 +1,75 @@
+name: Burst test
+
+# Reproduces a burst of channel posts: N posts for a fake channel (-42),
+# each delivered twice at the same moment (as Telegram does), mirrored into
+# the bot owner's own Bale chat. Reports posts vs Bale sends and any job
+# errors (counts and short error texts only), then deletes the test
+# messages. Deploys nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      posts:
+        description: 'Number of posts (1-30)'
+        default: '20'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: burst-bridge-forward
+  cancel-in-progress: false
+
+jobs:
+  burst:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Write config from secrets
+        env:
+          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+          OWNER_TELEGRAM_ID: ${{ secrets.OWNER_TELEGRAM_ID }}
+          EITAA_YAR_TOKEN: ${{ secrets.EITAA_YAR_TOKEN }}
+          EITAA_OPERATOR_USERNAME: ${{ secrets.EITAA_OPERATOR_USERNAME }}
+          EITAA_TOKEN_KEY: ${{ secrets.EITAA_TOKEN_KEY }}
+          EITAA_RELAY_URL: ${{ secrets.EITAA_RELAY_URL }}
+          EITAA_RELAY_KEY: ${{ secrets.EITAA_RELAY_KEY }}
+        run: |
+          set +x
+          node scripts/write-config.mjs
+
+      - name: Fetch cloud state
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+        run: npx tgcloud fetch
+
+      - name: Burst
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+          POSTS: ${{ inputs.posts }}
+        run: |
+          case "$POSTS" in ''|*[!0-9]*) echo "posts must be a number"; exit 1;; esac
+          [ "$POSTS" -ge 1 ] && [ "$POSTS" -le 30 ] || { echo "posts must be 1-30"; exit 1; }
+          bash scripts/run-and-annotate.sh 'Prepare' '{ __burst_prepare: true }'
+          base=$(date +%s)
+          for i in $(seq 1 "$POSTS"); do
+            id=$((base * 100 + i))
+            payload="{ message_id: $id, date: $base, chat: { id: -42, type: 'channel' }, text: 'تست $i' }"
+            npx tgcloud run handlers/channel_post "$payload" > /dev/null 2>&1 &
+            npx tgcloud run handlers/channel_post "$payload" > /dev/null 2>&1 &
+          done
+          wait
+          # Let the queue finish (like the per-minute retry run would).
+          for k in 1 2 3; do npx tgcloud run handlers/message '{ __drain: true }' > /dev/null 2>&1 || true; done
+          bash scripts/run-and-annotate.sh 'Report' '{ __burst_report: true }'

@@ -242,4 +242,6 @@ export const baleCalls = table('bale_calls', {
   ok:      boolean('ok').notNull(),
   network: boolean('network').notNull(),
   code:    integer('code'),
+  chatId:  integer('chat_id'),
+  resultId: integer('result_id'),                     // message id Bale returned
 });

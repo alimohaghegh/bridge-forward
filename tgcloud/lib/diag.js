@@ -194,3 +194,53 @@ export async function formatCallLog() {
   lines.push('', `مشکوک به ارسال دوباره: ${suspects}`);
   return lines.join('\n');
 }
+
+// Burst test (CI: __burst_prepare, many parallel channel_post runs for the
+// fake channel -42, then __burst_report). The fake channel mirrors into the
+// owner's own Bale chat; the report deletes every test message it sent.
+const BURST_CHANNEL = -42;
+
+export async function runBurstPrepare() {
+  const owner = await getUser(OWNER_TELEGRAM_ID);
+  if (!owner || !owner.baleChatId) return { ok: false, error: 'owner not linked' };
+  await cleanupBurst(owner.baleChatId, 0);
+  await saveChannel(BURST_CHANNEL, owner.baleChatId, OWNER_TELEGRAM_ID);
+  await db.run(sql`
+    INSERT INTO eitaa_settings (key, value, updated_at) VALUES ('burst', ${JSON.stringify({ atMs: Date.now() })}, ${Math.floor(Date.now() / 1000)})
+    ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
+  return { ok: true };
+}
+
+async function cleanupBurst(baleChatId, sinceMs) {
+  let deleted = 0;
+  if (sinceMs) {
+    const sent = await db.all(sql`
+      SELECT DISTINCT result_id FROM bale_calls
+      WHERE method = 'sendMessage' AND ok = 1 AND chat_id = ${baleChatId} AND at_ms >= ${sinceMs} AND result_id IS NOT NULL`);
+    for (const r of sent) {
+      const d = await baleCall('deleteMessage', { chat_id: baleChatId, message_id: r.result_id });
+      if (d.ok) deleted++;
+    }
+  }
+  await db.run(sql`DELETE FROM outbox WHERE tg_channel_id = ${BURST_CHANNEL}`);
+  await db.run(sql`DELETE FROM mirrored WHERE tg_chat_id = ${BURST_CHANNEL}`);
+  await db.run(sql`DELETE FROM delivered WHERE chat_id = ${BURST_CHANNEL}`);
+  await db.run(sql`DELETE FROM channels WHERE tg_channel_id = ${BURST_CHANNEL}`);
+  return deleted;
+}
+
+export async function runBurstReport() {
+  const owner = await getUser(OWNER_TELEGRAM_ID);
+  const st = await getSetting('burst', null);
+  if (!owner || !st) return { ok: false, error: 'not prepared' };
+  const claimed = (await db.get(sql`SELECT count(*) AS n FROM delivered WHERE chat_id = ${BURST_CHANNEL}`)).n;
+  const left = (await db.get(sql`SELECT count(*) AS n FROM outbox WHERE tg_channel_id = ${BURST_CHANNEL}`)).n;
+  const mirrored = (await db.get(sql`SELECT count(*) AS n FROM mirrored WHERE tg_chat_id = ${BURST_CHANNEL}`)).n;
+  const sends = await db.get(sql`
+    SELECT count(*) AS attempts, count(DISTINCT call_id) AS calls, sum(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS ok
+    FROM bale_calls WHERE method = 'sendMessage' AND chat_id = ${owner.baleChatId} AND at_ms >= ${st.atMs}`);
+  const errors = (await getSetting('errors', [])).filter((e) => e.at * 1000 >= st.atMs - 1000)
+    .map((e) => `${e.where}: ${e.name} ${e.msg}`.slice(0, 120));
+  const deleted = await cleanupBurst(owner.baleChatId, st.atMs);
+  return { ok: true, claimed, queuedLeft: left, mirrored, sent: sends, duplicates: (sends.ok || 0) - mirrored, errors, deletedAfter: deleted };
+}

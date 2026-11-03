@@ -136,3 +136,18 @@ export async function recordBaleFailure(reason) {
     // The owner may not have started the bot; nothing else to do.
   }
 }
+
+// The last errors of background work (where, error name, short message; no
+// contents), for diagnosis: a job error used to pass for "Bale unavailable".
+export async function noteError(where, e) {
+  try {
+    const row = await db.get(sql`SELECT value FROM eitaa_settings WHERE key = 'errors'`);
+    const list = row && row.value ? JSON.parse(row.value) : [];
+    list.unshift({ at: now(), where, name: e && e.name, msg: String((e && (e.description || e.message)) || e).slice(0, 120) });
+    await db.run(sql`
+      INSERT INTO eitaa_settings (key, value, updated_at) VALUES ('errors', ${JSON.stringify(list.slice(0, 20))}, ${now()})
+      ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
+  } catch {
+    // Nothing more to do.
+  }
+}

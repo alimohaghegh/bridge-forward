@@ -10,7 +10,7 @@ import { isAlbumItem, collectAlbum } from '../lib/album.js';
 import { getChannel, telegramChannelTitle } from '../lib/channels.js';
 import { alreadyQueued, enqueuePost, enqueueAlbum, drain } from '../lib/mirror.js';
 import { mirrorChannelPost } from '../lib/eitaa_mirror.js';
-import { maybeCleanup } from '../lib/store.js';
+import { maybeCleanup, noteError } from '../lib/store.js';
 import { T } from '../lib/texts.js';
 
 // No new send starts after this much of the run (a run is cut off near 30 s).
@@ -37,6 +37,7 @@ async function mirrorToBale(post, started) {
     await drain(tgChannelId, { deadline: started + SEND_WINDOW_MS, probe: true });
   } catch (e) {
     console.error('channel_post handler failed:', safeErrorText(e));
+    await noteError('channel_post bale', e);
   }
 }
 

@@ -23,7 +23,7 @@ import {
 } from './forward.js';
 import { takeStaleAlbums, albumPending, releaseAlbumItems } from './album.js';
 import { getChannel, countChannelDelivery, telegramChannelTitle } from './channels.js';
-import { recordBaleSuccess, recordBaleFailure } from './store.js';
+import { recordBaleSuccess, recordBaleFailure, noteError } from './store.js';
 import { getSetting, setSetting } from './eitaa.js';
 import { T } from './texts.js';
 import { now, rowsOf, deletedPostAnswer } from './util.js';
@@ -305,6 +305,7 @@ async function drainLocked(link, deadline) {
       r = await runJob(link, job, deadline);
     } catch (e) {
       console.error('mirror job failed', job.kind, e && e.name);
+      await noteError('mirror job ' + job.kind, e);
       r = { ok: false, reason: 'unavailable' };
     }
 
