@@ -164,5 +164,10 @@ The platform manages the bot's webhook for you, derived from your deployed
   CI by `scripts/write-config.mjs` and is git-ignored. Never commit or log it.
 - **Deploy only via GitHub Actions** (`.github/workflows/deploy.yml`): a local
   `npx tgcloud push` without `config.js` would deploy a broken bot.
-- Privacy: never store or log message contents; only ids, state, counters.
+- Channels: `/channel` links a Telegram channel to a Bale channel
+  (`lib/channels.js`); `handlers/channel_post.js` re-publishes posts.
+- Albums: one update per item; `lib/album.js` collects them in the DB and the
+  first item's run sends them with `sendMediaGroup`.
+- Privacy: never store or log message contents; only ids, state, counters
+  (album items are the one exception: held seconds, then deleted).
 - All user-facing texts are Persian and live in `lib/texts.js`.

@@ -27,11 +27,6 @@ export function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function fullName(user) {
-  if (!user) return '';
-  return [user.first_name, user.last_name].filter(Boolean).join(' ');
-}
-
 // Splits text into chunks of at most `max` UTF-16 units, preferring line and
 // word boundaries.
 export function splitText(text, max) {

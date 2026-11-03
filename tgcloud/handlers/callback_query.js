@@ -4,6 +4,7 @@
 import { api } from 'sdk';
 import { pollBale, notifyLinked, hasPendingCode } from '../lib/linking.js';
 import { touchUser, getUser, isOwner } from '../lib/store.js';
+import { removeChannel } from '../lib/channels.js';
 import { safeErrorText } from '../lib/bale.js';
 import { T } from '../lib/texts.js';
 
@@ -15,8 +16,33 @@ async function answer(cq, text, showAlert) {
   }
 }
 
+// «قطع اتصال» buttons under /channels: callback data "unch:<tg channel id>".
+async function unlinkChannel(cq) {
+  try {
+    const tgChannelId = Number(cq.data.slice(5));
+    const removed = await removeChannel(tgChannelId, cq.from.id, isOwner(cq.from.id));
+    await answer(cq, removed ? T.chUnlinked : T.chUnlinkNotFound, true);
+    if (removed && cq.message) {
+      const keyboard = ((cq.message.reply_markup && cq.message.reply_markup.inline_keyboard) || [])
+        .filter((row) => !row.some((b) => b.callback_data === cq.data));
+      await api.editMessageReplyMarkup({
+        chat_id: cq.message.chat.id,
+        message_id: cq.message.message_id,
+        reply_markup: { inline_keyboard: keyboard },
+      }).catch(() => null);
+    }
+  } catch (e) {
+    console.error('channel unlink failed:', safeErrorText(e));
+    await answer(cq, '⚠️ خطای غیرمنتظره‌ای رخ داد. لطفاً دوباره امتحان کنید.', true);
+  }
+}
+
 export default async function (cq) {
   if (!cq || !cq.from) return;
+  if (typeof cq.data === 'string' && cq.data.startsWith('unch:')) {
+    await unlinkChannel(cq);
+    return;
+  }
   if (cq.data !== 'verify') {
     await answer(cq);
     return;

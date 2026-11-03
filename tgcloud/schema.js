@@ -1,7 +1,8 @@
 import { table, integer, text, boolean, index, uniqueIndex, sql } from 'sdk/db';
 
 // Privacy: only ids, link state, timestamps and counters are stored — never
-// message contents, names or usernames. All timestamps are unix seconds.
+// message contents, names or usernames (album items, below, are held for
+// seconds only). All timestamps are unix seconds.
 
 // One row per Telegram user who has talked to the bot.
 export const users = table('users', {
@@ -13,6 +14,12 @@ export const users = table('users', {
   failedCount:    integer('failed_count').notNull().default(0),
   createdAt:      integer('created_at').notNull().default(sql`(unixepoch())`),
   lastSeenAt:     integer('last_seen_at').notNull().default(sql`(unixepoch())`),
+  // Multi-step /channel setup: which answer the bot is waiting for
+  // ('tg_channel' | 'bale_channel'), the Telegram channel chosen in step 1,
+  // and when the wait expires.
+  pendingStep:      text('pending_step'),
+  pendingTgChannel: integer('pending_tg_channel'),
+  pendingUntil:     integer('pending_until'),
 }, (t) => ({
   baleIdx:     index('idx_users_bale_chat').on(t.baleChatId),
   lastSeenIdx: index('idx_users_last_seen').on(t.lastSeenAt),
@@ -50,4 +57,39 @@ export const delivered = table('delivered', {
 }, (t) => ({
   msgIdx:     uniqueIndex('uidx_delivered_msg').on(t.chatId, t.messageId),
   createdIdx: index('idx_delivered_created').on(t.createdAt),
+}));
+
+// Telegram channel → Bale channel mirrors. Set up by a user who is admin of
+// both (checked at setup); failures are reported to that user.
+export const channels = table('channels', {
+  tgChannelId:    integer('tg_channel_id').primaryKey(),
+  baleChatId:     integer('bale_chat_id').notNull(),
+  ownerTgId:      integer('owner_tg_id').notNull(),
+  linkedAt:       integer('linked_at').notNull().default(sql`(unixepoch())`),
+  deliveredCount: integer('delivered_count').notNull().default(0),
+  failedCount:    integer('failed_count').notNull().default(0),
+}, (t) => ({
+  ownerIdx: index('idx_channels_owner').on(t.ownerTgId),
+}));
+
+// Albums arrive as one update per item. Items wait here a few seconds until
+// the first item's run (the leader) sends them together; rows are deleted as
+// soon as the album is sent (cleanup removes leftovers). This is the only
+// place message data (file references, caption) is held, and only briefly.
+export const albums = table('albums', {
+  key:       text('key').primaryKey(),                 // "<chat_id>:<media_group_id>"
+  createdMs: integer('created_ms').notNull(),
+  closed:    boolean('closed').notNull().default(false),
+});
+
+export const albumItems = table('album_items', {
+  key:       text('key').notNull(),
+  chatId:    integer('chat_id').notNull(),
+  messageId: integer('message_id').notNull(),
+  createdMs: integer('created_ms').notNull(),
+  taken:     boolean('taken').notNull().default(false),
+  item:      text('item').notNull(),                   // JSON: media reference + caption
+}, (t) => ({
+  msgIdx: uniqueIndex('uidx_album_items_msg').on(t.chatId, t.messageId),
+  keyIdx: index('idx_album_items_key').on(t.key),
 }));

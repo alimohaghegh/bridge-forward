@@ -12,6 +12,7 @@ import {
   touchUser, getUser, setLink, clearLink, claimMessage, acquirePollLock, releasePollLock,
 } from './store.js';
 import { splitText } from './util.js';
+import { toBaleMarkdown, formatChunks } from './format.js';
 
 const USER_COMMANDS = [
   { command: 'start', description: 'شروع و اتصال حساب بله' },
@@ -19,6 +20,9 @@ const USER_COMMANDS = [
   { command: 'status', description: 'وضعیت اتصال' },
   { command: 'test', description: 'ارسال پیام آزمایشی به بله' },
   { command: 'unlink', description: 'قطع اتصال حساب بله' },
+  { command: 'channel', description: 'اتصال کانال تلگرام به کانال بله' },
+  { command: 'channels', description: 'کانال‌های متصل و قطع اتصال' },
+  { command: 'cancel', description: 'لغو کار در جریان' },
   { command: 'help', description: 'راهنما' },
 ];
 
@@ -77,6 +81,12 @@ export async function runSetup() {
              sum(CASE WHEN used_at IS NOT NULL THEN 1 ELSE 0 END) AS used
       FROM codes`);
     const s = await db.get(sql`SELECT update_offset, lock_until, consecutive_failures FROM bale_state WHERE id = 1`);
+    const ch = await db.get(sql`SELECT count(*) AS n FROM channels`);
+    const al = await db.get(sql`SELECT count(*) AS n FROM album_items`);
+    // How fast a database round trip is (album collection polls the DB).
+    const t0 = Date.now();
+    for (let i = 0; i < 10; i++) await db.get(sql`SELECT 1 AS x`);
+    const dbRoundTripMs = (Date.now() - t0) / 10;
     return {
       ok: true,
       users: u.users, linked: u.linked || 0,
@@ -84,6 +94,7 @@ export async function runSetup() {
       baleOffset: s && s.update_offset,
       lockHeld: Boolean(s && s.lock_until > t),
       baleFailuresInRow: s && s.consecutive_failures,
+      channels: ch.n, albumItemsWaiting: al.n, dbRoundTripMs,
     };
   });
 
@@ -139,6 +150,14 @@ async function selfTest() {
     checks.setLink = (await getUser(fake)).baleChatId === 12345;
     await clearLink(fake);
     checks.clearLink = (await getUser(fake)).baleChatId === null;
+
+    checks.boldItalic = toBaleMarkdown('سلام دنیا خوب', [
+      { type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 5, length: 5 },
+    ]) === '*سلام* _دنیا_ خوب';
+    checks.nested = toBaleMarkdown('ab cd', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 2 }]) === '*ab _cd_*';
+    checks.glued = toBaleMarkdown('abcd', [{ type: 'bold', offset: 1, length: 2 }]) === 'a *bc* d';
+    const chunks = formatChunks('x'.repeat(10) + ' ' + 'y'.repeat(10), [{ type: 'bold', offset: 5, length: 12 }], 12);
+    checks.chunkFormat = chunks.length === 2 && chunks[0] === 'xxxxx *xxxxx*' && chunks[1] === '*yyyyyy* yyyy';
 
     const parts = splitText('a'.repeat(9000), 4000);
     checks.splitText = parts.length === 3 && parts.join('') === 'a'.repeat(9000);

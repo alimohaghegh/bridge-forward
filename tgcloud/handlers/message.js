@@ -3,7 +3,12 @@
 
 import { api } from 'sdk';
 import { baleCall, classifyError, isSystemError, safeErrorText } from '../lib/bale.js';
-import { deliver, isSupported } from '../lib/forward.js';
+import { isSupported } from '../lib/forward.js';
+import { deliverMessage } from '../lib/album.js';
+import {
+  listChannels, saveChannel, setPending, clearPending, activePending, telegramChannelRef,
+  checkTelegramChannel, baleChannelRef, checkBaleChannel, telegramChannelTitle,
+} from '../lib/channels.js';
 import {
   createCode, getOrCreateCode, deletePendingCodes, hasPendingCode, pollBale, notifyLinked,
 } from '../lib/linking.js';
@@ -89,6 +94,28 @@ async function handleCommand(cmd, chatId, tgId, user) {
       await replyHtml(chatId, T.help);
       return true;
 
+    case 'channel':
+      if (!user.baleChatId) {
+        await reply(chatId, T.chNeedLink);
+        return true;
+      }
+      await setPending(tgId, 'tg_channel');
+      await replyHtml(chatId, T.chStep1);
+      return true;
+
+    case 'channels':
+      await sendChannelList(chatId, tgId);
+      return true;
+
+    case 'cancel':
+      if (activePending(user)) {
+        await clearPending(tgId);
+        await reply(chatId, T.chCancelled);
+      } else {
+        await reply(chatId, T.chNothingToCancel);
+      }
+      return true;
+
     case 'test': {
       if (!user.baleChatId) {
         await sendLinkInstructions(chatId, tgId, { prefix: '🔌 هنوز حساب بله‌ای متصل نیست.' });
@@ -119,6 +146,68 @@ async function handleCommand(cmd, chatId, tgId, user) {
   return false;
 }
 
+async function sendChannelList(chatId, tgId) {
+  const list = await listChannels(tgId);
+  if (!list.length) {
+    await reply(chatId, T.chListEmpty);
+    return;
+  }
+  const buttons = [];
+  for (const ch of list) {
+    const title = await telegramChannelTitle(ch.tgChannelId);
+    buttons.push([{ text: T.chUnlinkButton(title), callback_data: `unch:${ch.tgChannelId}` }]);
+  }
+  await reply(chatId, T.chListHeader, { reply_markup: { inline_keyboard: buttons } });
+}
+
+// A reply to a /channel step. Returns true when the message was consumed.
+async function handleChannelStep(step, message, user) {
+  const chatId = message.chat.id;
+  const tgId = message.from.id;
+
+  if (step === 'tg_channel') {
+    const ref = telegramChannelRef(message);
+    if (!ref) {
+      await reply(chatId, T.chStep1Bad);
+      return true;
+    }
+    const tg = await checkTelegramChannel(ref, tgId);
+    if (!tg.ok) {
+      await reply(chatId, tg.text + '\n\nبرای انصراف: /cancel');
+      return true;
+    }
+    await setPending(tgId, 'bale_channel', tg.id);
+    await replyHtml(chatId, T.chStep2(tg.title));
+    return true;
+  }
+
+  if (step === 'bale_channel') {
+    const ref = baleChannelRef(message.text);
+    if (!ref) {
+      await reply(chatId, T.chStep2Bad);
+      return true;
+    }
+    await reply(chatId, T.chChecking);
+    // Re-check the Telegram side: rights may have changed meanwhile.
+    const tg = await checkTelegramChannel(user.pendingTgChannel, tgId);
+    if (!tg.ok) {
+      await clearPending(tgId);
+      await reply(chatId, tg.text + '\n\nبرای شروع دوباره: /channel');
+      return true;
+    }
+    const bale = await checkBaleChannel(ref, user.baleChatId, isOwner(tgId));
+    if (!bale.ok) {
+      await reply(chatId, bale.text + '\n\nبرای انصراف: /cancel');
+      return true;
+    }
+    await saveChannel(tg.id, bale.id, tgId);
+    await clearPending(tgId);
+    await reply(chatId, T.chLinked(tg.title, bale.title));
+    return true;
+  }
+  return false;
+}
+
 async function forward(message, user) {
   const chatId = message.chat.id;
   const tgId = message.from.id;
@@ -128,19 +217,24 @@ async function forward(message, user) {
     return;
   }
 
-  const result = await deliver(user.baleChatId, message);
+  // Album items are collected and sent together by one of the runs; the
+  // others have nothing more to do.
+  const result = await deliverMessage(user.baleChatId, message);
+  if (!result) return;
   await countDelivery(tgId, result.ok);
 
   if (result.ok) {
     await recordBaleSuccess();
-    try {
-      await api.setMessageReaction({
-        chat_id: chatId,
-        message_id: message.message_id,
-        reaction: [{ type: 'emoji', emoji: '👍' }],
-      });
-    } catch {
-      // Reactions are a nicety; ignore failures.
+    for (const messageId of result.messageIds) {
+      try {
+        await api.setMessageReaction({
+          chat_id: chatId,
+          message_id: messageId,
+          reaction: [{ type: 'emoji', emoji: '👍' }],
+        });
+      } catch {
+        // Reactions are a nicety; ignore failures.
+      }
     }
     return;
   }
@@ -183,6 +277,14 @@ export default async function (message, ctx) {
         user = await getUser(tgId);
         if (cmd && (cmd.name === 'start' || cmd.name === 'status')) return;
       }
+    }
+
+    const step = activePending(user);
+    if (step && cmd) {
+      // Any command ends a pending /channel setup (/channel restarts it).
+      if (cmd.name !== 'cancel') await clearPending(tgId);
+    } else if (step && (await handleChannelStep(step, message, user))) {
+      return;
     }
 
     if (cmd && (await handleCommand(cmd, chatId, tgId, user))) return;

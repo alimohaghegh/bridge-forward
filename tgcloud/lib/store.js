@@ -5,6 +5,7 @@ import { eq, sql } from 'sdk/db';
 import { users, baleState } from '../schema.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { now, rowsOf } from './util.js';
+import { cleanupAlbums } from './album.js';
 
 const DELIVERED_RETENTION_SECONDS = 3 * 24 * 3600;
 const CODE_RETENTION_SECONDS = 24 * 3600;
@@ -72,6 +73,7 @@ export async function maybeCleanup() {
   const t = now();
   await db.run(sql`DELETE FROM delivered WHERE created_at < ${t - DELIVERED_RETENTION_SECONDS}`);
   await db.run(sql`DELETE FROM codes WHERE expires_at < ${t - CODE_RETENTION_SECONDS}`);
+  await cleanupAlbums();
 }
 
 // ── Bale state (single row, id = 1) ─────────────────────────────────────────
