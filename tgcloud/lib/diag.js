@@ -148,6 +148,12 @@ export async function runBaleState() {
   }
   // Without ids here: CI logs are public (the owner sees them with /bale_diag deletes).
   out.lastDeletes = (await getSetting('bale_deletes', [])).map(({ tg, bale, ...rest }) => rest);
+  // Which diagnostic tables/columns exist (did the migration apply?).
+  out.schema = {};
+  for (const tbl of ['bale_calls', 'debug_events']) {
+    const cols = await db.all(sql`SELECT name FROM pragma_table_info(${tbl})`).catch(() => []);
+    out.schema[tbl] = cols.map((c) => c.name).join(',') || 'missing';
+  }
   // Bale attempts per method in the last 30 minutes, and how many calls
   // (a call = one baleCall with its retries) there were.
   out.calls30m = await db.all(sql`

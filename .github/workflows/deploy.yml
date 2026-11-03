@@ -68,7 +68,12 @@ jobs:
       - name: Migrate database (safe changes only)
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
-        run: npx tgcloud migrate --safe
+        run: |
+          out=$(npx tgcloud migrate --safe 2>&1); status=$?
+          printf '%s\n' "$out"
+          flat=$(printf '%s' "$out" | sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' | tr '\r\n' '  ' | tr -s ' ' | cut -c1-3000 | sed 's/%/%25/g')
+          printf '::notice title=Migrate::%s\n' "$flat"
+          exit $status
 
       # push already refreshes the webhook; with a CI token this call may be
       # refused (Unauthorized), so it is best-effort.
