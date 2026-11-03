@@ -1,4 +1,5 @@
-// Linking a Telegram user to a Bale chat with single-use codes.
+// Linking with single-use codes: a Telegram user to their Bale chat, and a
+// Telegram channel to a Bale channel or group (the code is posted there).
 //
 // Bale can't push to us (the platform only hosts the Telegram webhook), so
 // pending Bale messages are pulled with getUpdates whenever someone presses
@@ -12,6 +13,7 @@ import {
   acquirePollLock, releasePollLock, getBaleState, saveOffset, setLink,
   recordBaleSuccess, recordBaleFailure,
 } from './store.js';
+import { linkBaleTarget } from './channels.js';
 import { T } from './texts.js';
 import { now, rowsOf, toAsciiDigits } from './util.js';
 
@@ -40,15 +42,26 @@ function randomCode() {
   return out;
 }
 
-// Creates a fresh code for the user, dropping their older unused ones.
+// Creates a fresh account code for the user, dropping their older unused ones.
 export async function createCode(tgId) {
+  await db.run(sql`DELETE FROM codes WHERE tg_id = ${tgId} AND used_at IS NULL AND tg_channel_id IS NULL`);
+  return insertCode(tgId, null);
+}
+
+// A code that links Telegram channel `tgChannelId` to the Bale channel or
+// group it gets posted in.
+export async function createChannelCode(tgId, tgChannelId) {
+  await db.run(sql`DELETE FROM codes WHERE tg_id = ${tgId} AND used_at IS NULL AND tg_channel_id IS NOT NULL`);
+  return insertCode(tgId, tgChannelId);
+}
+
+async function insertCode(tgId, tgChannelId) {
   const t = now();
-  await db.delete(linkCodes).where(and(eq(linkCodes.tgId, tgId), isNull(linkCodes.usedAt))).run();
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = randomCode();
-    const r = await db.run(
-      sql`INSERT OR IGNORE INTO codes (code, tg_id, created_at, expires_at) VALUES (${code}, ${tgId}, ${t}, ${t + CODE_TTL_SECONDS})`
-    );
+    const r = await db.run(sql`
+      INSERT OR IGNORE INTO codes (code, tg_id, created_at, expires_at, tg_channel_id)
+      VALUES (${code}, ${tgId}, ${t}, ${t + CODE_TTL_SECONDS}, ${tgChannelId})`);
     if (r.rowsAffected > 0) return { code, minutesLeft: CODE_TTL_SECONDS / 60 };
   }
   throw new Error('could not allocate a link code');
@@ -66,13 +79,20 @@ export async function getOrCreateCode(tgId) {
 
 async function pendingCode(tgId) {
   return db.select().from(linkCodes)
-    .where(and(eq(linkCodes.tgId, tgId), isNull(linkCodes.usedAt), gt(linkCodes.expiresAt, now())))
+    .where(and(eq(linkCodes.tgId, tgId), isNull(linkCodes.usedAt), isNull(linkCodes.tgChannelId), gt(linkCodes.expiresAt, now())))
     .orderBy(desc(linkCodes.expiresAt))
     .get();
 }
 
 export async function hasPendingCode(tgId) {
   return Boolean(await pendingCode(tgId));
+}
+
+export async function hasPendingChannelCode(tgId) {
+  const row = await db.get(sql`
+    SELECT 1 AS x FROM codes
+    WHERE tg_id = ${tgId} AND used_at IS NULL AND tg_channel_id IS NOT NULL AND expires_at > ${now()}`);
+  return Boolean(row);
 }
 
 export async function deletePendingCodes(tgId) {
@@ -88,31 +108,90 @@ export function extractCode(text) {
   return /^[A-Z0-9]{8}$/.test(s) ? s : null;
 }
 
-// Atomically consumes a valid code. Returns the Telegram id or null.
-export async function consumeCode(code) {
+// Atomically consumes a valid code of the given kind (channel codes or
+// account codes). Returns { tgId, tgChannelId } or null.
+export async function consumeCode(code, { channel = false } = {}) {
   const t = now();
-  const r = await db.run(
-    sql`UPDATE codes SET used_at = ${t} WHERE code = ${code} AND used_at IS NULL AND expires_at > ${t} RETURNING tg_id`
-  );
+  const r = channel
+    ? await db.run(sql`
+        UPDATE codes SET used_at = ${t}
+        WHERE code = ${code} AND used_at IS NULL AND expires_at > ${t} AND tg_channel_id IS NOT NULL
+        RETURNING tg_id, tg_channel_id`)
+    : await db.run(sql`
+        UPDATE codes SET used_at = ${t}
+        WHERE code = ${code} AND used_at IS NULL AND expires_at > ${t} AND tg_channel_id IS NULL
+        RETURNING tg_id, tg_channel_id`);
   const row = rowsOf(r)[0];
-  return row ? Number(row.tg_id) : null;
+  return row ? { tgId: Number(row.tg_id), tgChannelId: row.tg_channel_id === null ? null : Number(row.tg_channel_id) } : null;
+}
+
+async function isChannelCode(code) {
+  const row = await db.get(sql`SELECT 1 AS x FROM codes WHERE code = ${code} AND tg_channel_id IS NOT NULL`);
+  return Boolean(row);
 }
 
 async function baleReply(chatId, text) {
   await baleCall('sendMessage', { chat_id: chatId, text });
 }
 
-async function handleBaleMessage(msg, linkedNow) {
-  if (!msg || !msg.chat || msg.chat.type !== 'private') return;
+// A channel code posted in a Bale channel/group (or a post with it
+// forwarded to the bot): links that chat to the user's Telegram channel.
+async function handleChannelCode(code, target, sink) {
+  const c = await consumeCode(code, { channel: true });
+  if (!c) return false;
+  const result = await linkBaleTarget(c.tgId, c.tgChannelId, target);
+  sink.channelLinked.add(c.tgId);
+  if (!result.ok) {
+    sink.channelFailed.add(c.tgId);
+    // Let the user fix the rights and post the same code again.
+    await db.run(sql`UPDATE codes SET used_at = NULL WHERE code = ${code}`);
+  }
+  return true;
+}
+
+async function handleBaleMessage(msg, sink) {
+  if (!msg || !msg.chat) return;
   const chatId = msg.chat.id;
-  const text = typeof msg.text === 'string' ? msg.text : '';
+  const text = typeof msg.text === 'string' ? msg.text : (typeof msg.caption === 'string' ? msg.caption : '');
   const code = extractCode(text);
+
+  // Codes posted in a Bale channel or group link that chat to a channel.
+  if (msg.chat.type === 'channel' || msg.chat.type === 'group') {
+    if (code) {
+      await handleChannelCode(code, {
+        chatId, type: msg.chat.type, title: msg.chat.title,
+        posterId: msg.from && msg.from.id, codeMessageId: msg.message_id,
+      }, sink);
+    }
+    return;
+  }
+  if (msg.chat.type !== 'private') return;
+
+  // A channel post with a code, forwarded to the bot: link that channel.
+  const fwd = msg.forward_from_chat;
+  if (code && fwd && (fwd.type === 'channel' || fwd.type === 'group')) {
+    const handled = await handleChannelCode(code, {
+      chatId: fwd.id, type: fwd.type, title: fwd.title,
+      codeMessageId: msg.forward_from_message_id,
+    }, sink);
+    if (handled) {
+      await baleReply(chatId, T.baleChannelLinkedHere);
+      return;
+    }
+  }
+
+  const linkedNow = sink.linkedNow;
   // Old messages (left in Bale's queue while nobody checked) get no replies:
   // their codes have expired anyway and a burst of late answers confuses.
   const stale = typeof msg.date === 'number' && now() - msg.date > STALE_SECONDS;
 
   if (code) {
-    const tgId = await consumeCode(code);
+    if (await isChannelCode(code)) {
+      if (!stale) await baleReply(chatId, T.baleChannelCodeHere);
+      return;
+    }
+    const consumed = await consumeCode(code);
+    const tgId = consumed && consumed.tgId;
     if (tgId) {
       await setLink(tgId, chatId);
       linkedNow.add(tgId);
@@ -129,13 +208,16 @@ async function handleBaleMessage(msg, linkedNow) {
   if (!linked && !stale) await baleReply(chatId, T.baleHint);
 }
 
-// Processes every pending Bale update. Returns
-// { status: 'ok' | 'busy' | 'error', linkedNow: Set<tgId>, reason? }.
+// Processes every pending Bale update. Returns { status: 'ok' | 'busy' |
+// 'error', linkedNow: Set<tgId>, channelLinked: Set<tgId>, channelFailed:
+// Set<tgId>, reason? } (channelLinked: users whose channel code was used;
+// they have been told the outcome in Telegram already).
 export async function pollBale() {
-  const linkedNow = new Set();
+  const sink = { linkedNow: new Set(), channelLinked: new Set(), channelFailed: new Set() };
+  const linkedNow = sink.linkedNow;
   const started = Date.now();
   const deadline = started + POLL_BUDGET_MS;
-  if (!(await acquirePollLock(POLL_LOCK_SECONDS))) return { status: 'busy', linkedNow };
+  if (!(await acquirePollLock(POLL_LOCK_SECONDS))) return { status: 'busy', ...sink };
   try {
     const state = await getBaleState();
     let offset = Number(state.updateOffset) || 0;
@@ -149,7 +231,7 @@ export async function pollBale() {
       if (!r.ok) {
         const reason = classifyError(r);
         if (isSystemError(reason)) await recordBaleFailure('getUpdates/' + reason);
-        return { status: 'error', linkedNow, reason };
+        return { status: 'error', ...sink, reason };
       }
       await recordBaleSuccess();
       const updates = Array.isArray(r.result) ? r.result : [];
@@ -157,7 +239,7 @@ export async function pollBale() {
 
       for (const u of updates) {
         // Leave the rest for the next press rather than being cut off.
-        if (Date.now() > deadline) return { status: 'ok', linkedNow };
+        if (Date.now() > deadline) return { status: 'ok', ...sink };
         // Advance before handling (at most once): if the run is cut off, an
         // update is skipped rather than answered twice. Bale keeps resending
         // unconfirmed updates otherwise.
@@ -166,14 +248,15 @@ export async function pollBale() {
           await saveOffset(offset);
         }
         try {
-          await handleBaleMessage(u.message, linkedNow);
+          // Channel posts aren't in Bale's documented Update, but accept them.
+          await handleBaleMessage(u.message || u.channel_post, sink);
         } catch (e) {
           console.error('bale update failed', u.update_id, e && e.name);
         }
       }
       if (updates.length < 100) break;
     }
-    return { status: 'ok', linkedNow };
+    return { status: 'ok', ...sink };
   } finally {
     await releasePollLock();
   }

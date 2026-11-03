@@ -1,39 +1,39 @@
 // handlers/channel_post.js — posts in Telegram channels where the bot is
-// admin. Posts of channels linked with /channel are re-published in the
-// linked Bale channel; failures are reported to whoever set up the link.
-// Post contents are never stored (album items only for seconds) or logged.
+// admin. Posts of linked channels go into the mirror queue (lib/mirror.js),
+// which sends them to Bale in order and keeps them until Bale accepts them.
 
 import { api } from 'sdk';
-import { isSystemError, safeErrorText } from '../lib/bale.js';
-import { isSupported } from '../lib/forward.js';
-import { deliverMessage } from '../lib/album.js';
-import { getChannel, countChannelDelivery } from '../lib/channels.js';
-import { claimMessage, maybeCleanup, recordBaleSuccess, recordBaleFailure } from '../lib/store.js';
+import { safeErrorText } from '../lib/bale.js';
+import { isAlbumItem, collectAlbum } from '../lib/album.js';
+import { getChannel, telegramChannelTitle } from '../lib/channels.js';
+import { alreadyQueued, enqueuePost, enqueueAlbum, drain } from '../lib/mirror.js';
+import { maybeCleanup } from '../lib/store.js';
 import { T } from '../lib/texts.js';
 
+// No new send starts after this much of the run (a run is cut off near 30 s).
+const SEND_WINDOW_MS = 8000;
+
 export default async function (post) {
+  const started = Date.now();
   if (!post || !post.chat || post.chat.type !== 'channel') return;
   const tgChannelId = post.chat.id;
 
   try {
     const link = await getChannel(tgChannelId);
     if (!link) return;
-    if (!(await claimMessage(tgChannelId, post.message_id))) return; // redelivery
-    await maybeCleanup();
-    if (!isSupported(post)) return; // stickers, polls…: nothing to publish
 
-    const result = await deliverMessage(link.baleChatId, post);
-    if (!result) return; // another run sends this album
-    await countChannelDelivery(tgChannelId, result.ok);
-
-    if (result.ok) {
-      await recordBaleSuccess();
-      return;
+    if (!(await alreadyQueued(tgChannelId, post.message_id))) {
+      if (isAlbumItem(post)) {
+        const items = await collectAlbum(post);
+        if (items) await enqueueAlbum(tgChannelId, items);
+        else return; // the album's first item sends it
+      } else if (!(await enqueuePost(tgChannelId, post))) {
+        const title = await telegramChannelTitle(tgChannelId);
+        await api.sendMessage({ chat_id: link.ownerTgId, text: T.chUnsupported(title) }).catch(() => null);
+      }
     }
-    if (isSystemError(result.reason)) await recordBaleFailure('channel/' + result.reason);
-    const reason = T.chFailReasons[result.reason] || T.fail[result.reason] || T.fail.rejected;
-    await api.sendMessage({ chat_id: link.ownerTgId, text: T.chFail(post.chat.title || '', reason) })
-      .catch(() => null);
+    await maybeCleanup();
+    await drain(tgChannelId, { deadline: started + SEND_WINDOW_MS, probe: true });
   } catch (e) {
     console.error('channel_post handler failed:', safeErrorText(e));
   }

@@ -2,7 +2,7 @@
 // messages, link any valid codes (for every user), and report back.
 
 import { api } from 'sdk';
-import { pollBale, notifyLinked, hasPendingCode } from '../lib/linking.js';
+import { pollBale, notifyLinked, hasPendingCode, hasPendingChannelCode } from '../lib/linking.js';
 import { touchUser, getUser, isOwner } from '../lib/store.js';
 import { removeChannel } from '../lib/channels.js';
 import { safeErrorText } from '../lib/bale.js';
@@ -37,10 +37,40 @@ async function unlinkChannel(cq) {
   }
 }
 
+// «کد را گذاشتم» under /channel step 2: look for the channel code in Bale.
+async function verifyChannel(cq) {
+  const tgId = cq.from.id;
+  try {
+    const result = await pollBale();
+    await notifyLinked(result.linkedNow, tgId);
+    if (result.channelLinked.has(tgId)) {
+      // The outcome was sent as a message already.
+      await answer(cq, T.chVerifyDone);
+      if (!result.channelFailed.has(tgId) && cq.message) {
+        await api.editMessageReplyMarkup({
+          chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] },
+        }).catch(() => null);
+      }
+      return;
+    }
+    if (result.status === 'busy') return answer(cq, T.verifyBusy, true);
+    if (result.status === 'error') return answer(cq, T.verifyBaleDown, true);
+    if (await hasPendingChannelCode(tgId)) return answer(cq, T.chVerifyNotFound, true);
+    await answer(cq, T.chVerifyExpired, true);
+  } catch (e) {
+    console.error('channel verify failed:', safeErrorText(e));
+    await answer(cq, '⚠️ خطای غیرمنتظره‌ای رخ داد. لطفاً دوباره امتحان کنید.', true);
+  }
+}
+
 export default async function (cq) {
   if (!cq || !cq.from) return;
   if (typeof cq.data === 'string' && cq.data.startsWith('unch:')) {
     await unlinkChannel(cq);
+    return;
+  }
+  if (cq.data === 'verify_ch') {
+    await verifyChannel(cq);
     return;
   }
   if (cq.data !== 'verify') {

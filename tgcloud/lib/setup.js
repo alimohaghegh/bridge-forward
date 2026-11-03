@@ -7,12 +7,14 @@ import { api, db } from 'sdk';
 import { sql } from 'sdk/db';
 import { baleCall, safeErrorText } from './bale.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
-import { createCode, getOrCreateCode, extractCode, consumeCode } from './linking.js';
+import { createCode, createChannelCode, getOrCreateCode, extractCode, consumeCode } from './linking.js';
 import {
   touchUser, getUser, setLink, clearLink, claimMessage, acquirePollLock, releasePollLock,
 } from './store.js';
 import { splitText } from './util.js';
 import { toBaleMarkdown, formatChunks } from './format.js';
+import { planMessage, planAlbum } from './forward.js';
+import { queueStats } from './mirror.js';
 
 const USER_COMMANDS = [
   { command: 'start', description: 'شروع و اتصال حساب بله' },
@@ -33,6 +35,7 @@ const OWNER_COMMANDS = [
   { command: 'block', description: 'مسدود کردن کاربر (مدیر)' },
   { command: 'unblock', description: 'رفع مسدودی کاربر (مدیر)' },
   { command: 'diag', description: 'بررسی اتصال به بله (مدیر)' },
+  { command: 'sync', description: 'ارسال فوری صف کانال‌ها (مدیر)' },
 ];
 
 async function step(fn) {
@@ -107,6 +110,7 @@ export async function runSetup() {
     return { ok: true, count: list.length, withText: list.filter((x) => x.message && x.message.text).length };
   });
 
+  out.mirrorQueue = await step(async () => ({ ok: true, ...(await queueStats()) }));
   out.importOldLinks = await step(importOldLinks);
   out.selfTest = await step(selfTest);
 
@@ -140,8 +144,20 @@ async function selfTest() {
     checks.reuseCode = (await getOrCreateCode(fake)).code === code;
     const extracted = extractCode('/start ' + code.toLowerCase().slice(0, 4) + ' ' + code.slice(4));
     checks.extractCode = extracted === code;
-    checks.consumeOnce = (await consumeCode(code)) === fake;
+    const consumed = await consumeCode(code);
+    checks.consumeOnce = Boolean(consumed && consumed.tgId === fake && consumed.tgChannelId === null);
     checks.consumeTwice = (await consumeCode(code)) === null;
+    const ch = await createChannelCode(fake, -1001);
+    checks.channelCodeKind = (await consumeCode(ch.code)) === null
+      && ((await consumeCode(ch.code, { channel: true })) || {}).tgChannelId === -1001;
+
+    const plan = planMessage({ message_id: 7, text: 'x'.repeat(4500), entities: [{ type: 'bold', offset: 0, length: 3 }] });
+    checks.planText = plan.ops.length === 2 && plan.ops[0].text.startsWith('*xxx*') && plan.layout[7] === 'text';
+    const photo = (id) => ({ message_id: id, photo: [{ file_id: 'f' + id, file_unique_id: 'u' + id }] });
+    const ap = planAlbum([{ tg: 9, spec: planMessage(photo(9)).ops[0].spec, caption: '' },
+      { tg: 8, spec: planMessage(photo(8)).ops[0].spec, caption: 'c' }]);
+    checks.planAlbum = ap.ops.length === 1 && ap.ops[0].op === 'group' && ap.ops[0].items[0].tg === 8
+      && ap.ops[0].items[0].caption === 'c' && ap.fileUid[9] === 'u9';
 
     checks.claimFirst = (await claimMessage(fake, 1)) === true;
     checks.claimRepeat = (await claimMessage(fake, 1)) === false;
@@ -157,7 +173,8 @@ async function selfTest() {
     checks.nested = toBaleMarkdown('ab cd', [{ type: 'bold', offset: 0, length: 5 }, { type: 'italic', offset: 3, length: 2 }]) === '*ab _cd_*';
     checks.glued = toBaleMarkdown('abcd', [{ type: 'bold', offset: 1, length: 2 }]) === 'a *bc* d';
     const chunks = formatChunks('x'.repeat(10) + ' ' + 'y'.repeat(10), [{ type: 'bold', offset: 5, length: 12 }], 12);
-    checks.chunkFormat = chunks.length === 2 && chunks[0] === 'xxxxx *xxxxx*' && chunks[1] === '*yyyyyy* yyyy';
+    checks.chunkFormat = chunks.length === 2 && chunks[0].text === 'xxxxx *xxxxx*' && chunks[1].text === '*yyyyyy* yyyy'
+      && chunks[1].plain === 'yyyyyyyyyy';
 
     const parts = splitText('a'.repeat(9000), 4000);
     checks.splitText = parts.length === 3 && parts.join('') === 'a'.repeat(9000);

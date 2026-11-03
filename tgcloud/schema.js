@@ -33,6 +33,8 @@ export const linkCodes = table('codes', {
   createdAt: integer('created_at').notNull().default(sql`(unixepoch())`),
   expiresAt: integer('expires_at').notNull(),
   usedAt:    integer('used_at'),
+  // Set for codes that link a Bale channel/group to this Telegram channel.
+  tgChannelId: integer('tg_channel_id'),
 }, (t) => ({
   tgIdx:      index('idx_codes_tg').on(t.tgId),
   expiresIdx: index('idx_codes_expires').on(t.expiresAt),
@@ -59,8 +61,8 @@ export const delivered = table('delivered', {
   createdIdx: index('idx_delivered_created').on(t.createdAt),
 }));
 
-// Telegram channel → Bale channel mirrors. Set up by a user who is admin of
-// both (checked at setup); failures are reported to that user.
+// Telegram channel → Bale channel/group mirrors. Set up by a user who is
+// admin of both (checked at setup); problems are reported to that user.
 export const channels = table('channels', {
   tgChannelId:    integer('tg_channel_id').primaryKey(),
   baleChatId:     integer('bale_chat_id').notNull(),
@@ -68,6 +70,8 @@ export const channels = table('channels', {
   linkedAt:       integer('linked_at').notNull().default(sql`(unixepoch())`),
   deliveredCount: integer('delivered_count').notNull().default(0),
   failedCount:    integer('failed_count').notNull().default(0),
+  lockUntil:      integer('lock_until').notNull().default(0),   // one sender at a time
+  probedAt:       integer('probed_at').notNull().default(0),    // last deletion check
 }, (t) => ({
   ownerIdx: index('idx_channels_owner').on(t.ownerTgId),
 }));
@@ -92,4 +96,41 @@ export const albumItems = table('album_items', {
 }, (t) => ({
   msgIdx: uniqueIndex('uidx_album_items_msg').on(t.chatId, t.messageId),
   keyIdx: index('idx_album_items_key').on(t.key),
+}));
+
+// Channel mirror queue: posts, albums, edits and deletions waiting to be
+// applied in Bale, strictly in Telegram order (sort_key = Telegram message
+// id). A job stays until Bale accepts it, so nothing is lost while Bale is
+// unreachable. `payload` holds the post (needed to send it) and is deleted
+// with the job once it is done.
+export const outbox = table('outbox', {
+  id:          integer('id').primaryKey({ autoIncrement: true }),
+  tgChannelId: integer('tg_channel_id').notNull(),
+  sortKey:     integer('sort_key').notNull(),
+  kind:        text('kind').notNull(),                 // post | album | edit | delete
+  payload:     text('payload'),
+  attempts:    integer('attempts').notNull().default(0),
+  lastReason:  text('last_reason'),
+  alerted:     boolean('alerted').notNull().default(false),
+  createdAt:   integer('created_at').notNull().default(sql`(unixepoch())`),
+}, (t) => ({
+  orderIdx: index('idx_outbox_order').on(t.tgChannelId, t.sortKey, t.id),
+}));
+
+// Which Bale messages a mirrored Telegram post became (ids only), so edits
+// and deletions can follow. layout: text | media | media+text (caption sent
+// as separate text). Rows older than 30 days are pruned.
+export const mirrored = table('mirrored', {
+  tgChatId:    integer('tg_chat_id').notNull(),
+  tgMessageId: integer('tg_message_id').notNull(),
+  baleChatId:  integer('bale_chat_id').notNull(),
+  baleIds:     text('bale_ids').notNull(),             // JSON array
+  layout:      text('layout').notNull(),
+  fileUid:     text('file_uid'),                       // Telegram file_unique_id
+  createdAt:   integer('created_at').notNull().default(sql`(unixepoch())`),
+  checkedAt:   integer('checked_at').notNull().default(0),
+  missing:     integer('missing').notNull().default(0), // "not found" probes in a row
+}, (t) => ({
+  msgIdx:     uniqueIndex('uidx_mirrored_msg').on(t.tgChatId, t.tgMessageId),
+  createdIdx: index('idx_mirrored_created').on(t.createdAt),
 }));

@@ -3,14 +3,15 @@
 
 import { api } from 'sdk';
 import { baleCall, classifyError, isSystemError, safeErrorText } from '../lib/bale.js';
-import { isSupported } from '../lib/forward.js';
-import { deliverMessage } from '../lib/album.js';
+import { isSupported, deliver, deliverAlbum } from '../lib/forward.js';
+import { isAlbumItem, collectAlbum, releaseAlbumItems } from '../lib/album.js';
+import { drainAll } from '../lib/mirror.js';
 import {
   listChannels, saveChannel, setPending, clearPending, activePending, telegramChannelRef,
-  checkTelegramChannel, baleChannelRef, checkBaleChannel, telegramChannelTitle,
+  checkTelegramChannel, baleChannelRef, checkBaleChannel, telegramChannelTitle, confirmBaleTarget,
 } from '../lib/channels.js';
 import {
-  createCode, getOrCreateCode, deletePendingCodes, hasPendingCode, pollBale, notifyLinked,
+  createCode, getOrCreateCode, deletePendingCodes, hasPendingCode, pollBale, notifyLinked, createChannelCode,
 } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
@@ -19,7 +20,9 @@ import {
   touchUser, getUser, clearLink, claimMessage, maybeCleanup, countDelivery, isOwner,
   recordBaleSuccess, recordBaleFailure,
 } from '../lib/store.js';
-import { T, linkInstructions, statusText, baleStartLink, VERIFY_BUTTON, OPEN_BALE_BUTTON } from '../lib/texts.js';
+import {
+  T, linkInstructions, statusText, baleStartLink, VERIFY_BUTTON, OPEN_BALE_BUTTON, VERIFY_CHANNEL_BUTTON,
+} from '../lib/texts.js';
 import { TELEGRAM_BOT_USERNAME } from '../lib/util.js';
 
 async function reply(chatId, text, extra) {
@@ -134,6 +137,15 @@ async function handleCommand(cmd, chatId, tgId, user) {
     }
   }
 
+  if (cmd.name === 'sync' && isOwner(tgId)) {
+    const r = await drainAll();
+    const labels = { empty: 'همه رسیده', retry: 'منتظر بله', busy: 'در حال ارسال', waiting: 'در حال جمع کردن آلبوم', timeout: 'ادامه در نوبت بعد' };
+    const lines = [];
+    for (const [id, status] of Object.entries(r)) lines.push(`${await telegramChannelTitle(Number(id))}: ${labels[status] || status}`);
+    await reply(chatId, '🔄 ' + (lines.join('\n') || 'کانالی متصل نیست'));
+    return true;
+  }
+
   if (cmd.name === 'diag' && isOwner(tgId)) {
     await reply(chatId, formatProbe(await runBaleProbe(user.baleChatId, '🔧 آزمایش اتصال (از طرف مدیر ربات)')));
     return true;
@@ -177,7 +189,10 @@ async function handleChannelStep(step, message, user) {
       return true;
     }
     await setPending(tgId, 'bale_channel', tg.id);
-    await replyHtml(chatId, T.chStep2(tg.title));
+    const { code } = await createChannelCode(tgId, tg.id);
+    await replyHtml(chatId, T.chStep2(tg.title, code), {
+      reply_markup: { inline_keyboard: [[{ text: VERIFY_CHANNEL_BUTTON, callback_data: 'verify_ch' }]] },
+    });
     return true;
   }
 
@@ -200,9 +215,15 @@ async function handleChannelStep(step, message, user) {
       await reply(chatId, bale.text + '\n\nبرای انصراف: /cancel');
       return true;
     }
+    const confirm = await confirmBaleTarget(bale.id);
+    if (!confirm.ok) {
+      await reply(chatId, confirm.text + '\n\nبرای انصراف: /cancel');
+      return true;
+    }
     await saveChannel(tg.id, bale.id, tgId);
     await clearPending(tgId);
-    await reply(chatId, T.chLinked(tg.title, bale.title));
+    await deletePendingCodes(tgId);
+    await reply(chatId, T.chLinked(tg.title, bale.title) + (confirm.canDelete ? '' : '\n\n' + T.chCantDelete));
     return true;
   }
   return false;
@@ -219,13 +240,22 @@ async function forward(message, user) {
 
   // Album items are collected and sent together by one of the runs; the
   // others have nothing more to do.
-  const result = await deliverMessage(user.baleChatId, message);
-  if (!result) return;
+  let result;
+  let messageIds = [message.message_id];
+  if (isAlbumItem(message)) {
+    const items = await collectAlbum(message);
+    if (!items) return;
+    result = await deliverAlbum(user.baleChatId, items);
+    await releaseAlbumItems(chatId, items);
+    messageIds = items.map((it) => it.tg);
+  } else {
+    result = await deliver(user.baleChatId, message);
+  }
   await countDelivery(tgId, result.ok);
 
   if (result.ok) {
     await recordBaleSuccess();
-    for (const messageId of result.messageIds) {
+    for (const messageId of messageIds) {
       try {
         await api.setMessageReaction({
           chat_id: chatId,
@@ -251,6 +281,8 @@ export default async function (message, ctx) {
   if (!(ctx && ctx.update) && message && message.__setup === true) return runSetup();
   if (!(ctx && ctx.update) && message && message.__diag === true) return runDiag();
   if (!(ctx && ctx.update) && message && message.__probe === true) return runDeleteProbe();
+  // Scheduled run (GitHub Actions): retry queued channel posts, find deletions.
+  if (!(ctx && ctx.update) && message && message.__drain === true) return drainAll();
 
   if (!message || !message.chat || message.chat.type !== 'private' || !message.from || message.from.is_bot) return;
   const chatId = message.chat.id;

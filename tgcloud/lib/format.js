@@ -74,7 +74,9 @@ export function splitRanges(text, max) {
   return ranges;
 }
 
-// Formatted chunks of `text`, each made from at most `max` source characters.
+// Chunks of `text` (each from at most `max` source characters) as
+// { text, plain }: Bale Markdown, and the same chunk without formatting
+// (a fallback if Bale refuses the Markdown).
 export function formatChunks(text, entities, max) {
   return splitRanges(text, max).map(([start, end]) => {
     const local = [];
@@ -83,6 +85,7 @@ export function formatChunks(text, entities, max) {
       const t = Math.min(e.offset + e.length, end);
       if (s < t) local.push({ type: e.type, offset: s - start, length: t - s });
     }
-    return toBaleMarkdown(text.slice(start, end), local);
+    const plain = text.slice(start, end);
+    return { text: toBaleMarkdown(plain, local), plain };
   });
 }

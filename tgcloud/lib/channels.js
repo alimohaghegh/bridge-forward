@@ -129,8 +129,9 @@ export function baleChannelRef(text) {
   return parseRef(text, /^(?:https?:\/\/)?(?:web\.)?(?:ble\.ir|bale\.ai)\/([A-Za-z0-9_]{3,})\/?$/i);
 }
 
-// Returns { ok: true, id, title } or { ok: false, text }. The owner of the
-// bot skips the "you are admin" check (only the bot's rights are checked).
+// Checks a public Bale channel given by @username / id. Returns { ok: true,
+// id, title } or { ok: false, text }. The owner of the bot skips the "you
+// are admin" check (only the bot's rights are checked).
 export async function checkBaleChannel(ref, userBaleId, skipUserCheck) {
   const chat = await baleCall('getChat', { chat_id: ref });
   if (!chat.ok) {
@@ -139,7 +140,6 @@ export async function checkBaleChannel(ref, userBaleId, skipUserCheck) {
   }
   const info = chat.result || {};
   if (!info.id) return { ok: false, text: T.chBaleNotFound };
-  if (info.type && info.type !== 'channel') return { ok: false, text: T.chBaleNotChannel };
 
   const admins = await baleCall('getChatAdministrators', { chat_id: info.id });
   if (!admins.ok) {
@@ -156,5 +156,60 @@ export async function checkBaleChannel(ref, userBaleId, skipUserCheck) {
   if (!skipUserCheck && !list.some((a) => a.user && Number(a.user.id) === Number(userBaleId))) {
     return { ok: false, text: T.chBaleUserNotAdmin };
   }
+  if (info.type && info.type !== 'channel' && info.type !== 'group') return { ok: false, text: T.chBaleNotChannel };
   return { ok: true, id: info.id, title: info.title || String(info.id) };
+}
+
+// Proves the bot can post in a Bale chat (and delete, which mirroring
+// deletions needs) by sending a short notice and removing it.
+// Returns { ok: true, canDelete } or { ok: false, text }.
+export async function confirmBaleTarget(baleChatId) {
+  const r = await baleCall('sendMessage', { chat_id: baleChatId, text: T.baleTargetTest });
+  if (!r.ok) {
+    const reason = classifyError(r);
+    return { ok: false, text: reason === 'unavailable' ? T.chBaleDown : T.chBaleBotCantPost };
+  }
+  const d = await baleCall('deleteMessage', { chat_id: baleChatId, message_id: r.result.message_id });
+  return { ok: true, canDelete: d.ok === true };
+}
+
+// Finishes linking after a channel code showed up in a Bale channel/group.
+// `target`: { chatId, type, title, posterId?, codeMessageId? }. Tells the
+// user the outcome in Telegram. Returns { ok }.
+export async function linkBaleTarget(tgId, tgChannelId, target) {
+  const tell = (text) => api.sendMessage({ chat_id: tgId, text }).catch(() => null);
+
+  const tg = await checkTelegramChannel(tgChannelId, tgId);
+  if (!tg.ok) {
+    await tell(tg.text + '\n\nبرای شروع دوباره: /channel');
+    return { ok: false };
+  }
+
+  // In a group, whoever posted the code must be an admin there.
+  if (target.type === 'group' && target.posterId) {
+    const member = await baleCall('getChatMember', { chat_id: target.chatId, user_id: target.posterId });
+    if (!member.ok) {
+      await tell(classifyError(member) === 'unavailable' ? T.chBaleDown : T.chBaleGroupBotNotAdmin);
+      return { ok: false };
+    }
+    if (!isAdmin(member.result)) {
+      await tell(T.chBaleGroupPosterNotAdmin);
+      return { ok: false };
+    }
+  }
+
+  const confirm = await confirmBaleTarget(target.chatId);
+  if (!confirm.ok) {
+    await tell(confirm.text);
+    return { ok: false };
+  }
+
+  await saveChannel(tg.id, target.chatId, tgId);
+  await clearPending(tgId);
+  if (target.codeMessageId) {
+    await baleCall('deleteMessage', { chat_id: target.chatId, message_id: target.codeMessageId });
+  }
+  const title = target.title || (target.type === 'group' ? 'گروه بله' : 'کانال بله');
+  await tell(T.chLinked(tg.title, title) + (confirm.canDelete ? '' : '\n\n' + T.chCantDelete));
+  return { ok: true };
 }
