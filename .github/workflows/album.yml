@@ -1,0 +1,68 @@
+name: Album test
+
+# Three albums of six numbered photos for a fake channel (-43), each item in
+# its own parallel run and in shuffled order, mirrored into the bot owner's
+# own Bale chat. Reports whether each arrived as one album in order, read back
+# from Bale (counts and numbers only), then deletes the test messages.
+# Deploys nothing.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: album-bridge-forward
+  cancel-in-progress: false
+
+jobs:
+  album:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Write config from secrets
+        env:
+          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+          OWNER_TELEGRAM_ID: ${{ secrets.OWNER_TELEGRAM_ID }}
+          EITAA_YAR_TOKEN: ${{ secrets.EITAA_YAR_TOKEN }}
+          EITAA_OPERATOR_USERNAME: ${{ secrets.EITAA_OPERATOR_USERNAME }}
+          EITAA_TOKEN_KEY: ${{ secrets.EITAA_TOKEN_KEY }}
+          EITAA_RELAY_URL: ${{ secrets.EITAA_RELAY_URL }}
+          EITAA_RELAY_KEY: ${{ secrets.EITAA_RELAY_KEY }}
+        run: |
+          set +x
+          node scripts/write-config.mjs
+
+      - name: Fetch cloud state
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+        run: npx tgcloud fetch
+
+      - name: Albums
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+        run: |
+          bash scripts/run-and-annotate.sh 'Prepare' '{ __album_prepare: true }'
+          for a in 1 2 3; do
+            for i in $(shuf -i 1-6); do
+              npx tgcloud run handlers/message "{ __album_item: true, album: $a, item: $i }" > /dev/null 2>&1 &
+            done
+            wait
+            sleep 15
+          done
+          npx tgcloud run handlers/message '{ __drain: true }' > /dev/null 2>&1 || true
+          sleep 10
+          bash scripts/run-and-annotate.sh 'Report' '{ __album_report: true }'
+          bash scripts/run-and-annotate.sh 'Cleanup' '{ __album_cleanup: true }'

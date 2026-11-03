@@ -22,6 +22,8 @@ import { clearPending, activePending, telegramChannelTitle } from '../lib/channe
 import { hasPendingCode, pollBale, notifyLinked } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
+import { runAlbumPrepare, albumTestPost, runAlbumReport, runAlbumCleanup } from '../lib/album_test.js';
+import channelPost from './channel_post.js';
 import {
   runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState, formatDeleteLog, formatCallLog, runBurstPrepare, runBurstReport, runProbeMethods,
 } from '../lib/diag.js';
@@ -183,6 +185,10 @@ const CI_RUNS = {
   __burst_prepare: runBurstPrepare,
   __burst_report: runBurstReport,
   __probe_methods: runProbeMethods,
+  __album_prepare: runAlbumPrepare,
+  __album_item: async (m) => { await channelPost(await albumTestPost(m)); return { ok: true }; },
+  __album_report: runAlbumReport,
+  __album_cleanup: runAlbumCleanup,
   __eitaa: runEitaaCiProbe,
   __eitaa_state: runEitaaState,
   // Retry queued channel posts and find deletions (Bale and Eitaa side by side).
@@ -200,7 +206,7 @@ export default async function (message, ctx) {
   await loadBaleFormat();
   if (!(ctx && ctx.update) && message) {
     const run = Object.keys(CI_RUNS).find((k) => message[k] === true);
-    if (run) return CI_RUNS[run]();
+    if (run) return CI_RUNS[run](message);
   }
 
   if (!message || !message.chat || message.chat.type !== 'private' || !message.from || message.from.is_bot) return;
