@@ -12,7 +12,7 @@ import {
   showMenu, showHelp, isEitaaStep, handleEitaaStep, handleOwnerReply, looksLikeEitaaToken, listRequests,
 } from '../lib/eitaa_link.js';
 import {
-  runEitaaDiag, runFmtDiag, runMethodsDiag, runSizeDiag, runEitaaCiProbe, runEitaaState, gatewayProbe,
+  runEitaaDiag, runFmtDiag, runFmt2Diag, runMethodsDiag, runSizeDiag, runEitaaCiProbe, runEitaaState, gatewayProbe,
 } from '../lib/eitaa_diag.js';
 import { sendLinkInstructions } from '../lib/start.js';
 import { loadBaleFormat, runBaleFmtDiag } from '../lib/bale_fmt.js';
@@ -142,6 +142,7 @@ async function handleCommand(cmd, chatId, tgId, user) {
   if (cmd.name === 'eitaa_diag' && isOwner(tgId)) {
     const [sub, extra] = cmd.arg.toLowerCase().split(/\s+/);
     if (sub === 'fmt') await runFmtDiag();
+    else if (sub === 'fmt2') await reply(chatId, '🔤 ' + JSON.stringify(await runFmt2Diag(), null, 1));
     else if (sub === 'methods') await runMethodsDiag();
     else if (sub === 'size') await runSizeDiag(extra);
     else if (sub === 'gateway') await reply(chatId, '🌐 ' + JSON.stringify(await gatewayProbe(), null, 1));
@@ -299,6 +300,7 @@ export default async function (message, ctx) {
   if (!(ctx && ctx.update) && message && message.__mirrortest === true) return runMirrorTest();
   if (!(ctx && ctx.update) && message && message.__eitaa === true) return runEitaaCiProbe();
   if (!(ctx && ctx.update) && message && message.__eitaa_state === true) return runEitaaState();
+  if (!(ctx && ctx.update) && message && message.__eitaa_fmt2 === true) return runFmt2Diag();
   // Scheduled run (GitHub Actions): retry queued channel posts, find
   // deletions. The output lands in public CI logs: counts only, no ids.
   if (!(ctx && ctx.update) && message && message.__drain === true) {

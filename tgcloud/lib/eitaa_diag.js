@@ -245,6 +245,36 @@ export async function runFmtDiag() {
   return null;
 }
 
+// /eitaa_diag fmt2 (and CI __eitaa_fmt2): do literal * _ / in a text break
+// Eitaa's HTML formatting, and which escape keeps them literal? Each
+// message carries the same formatted baseline plus one variant.
+const BASE = '<b>bold</b> <i>italic</i> <a href="https://eitaa.com">link</a> <code>code</code>';
+const ZWS = '\u200B';
+const FMT2 = [
+  ['html', `1) ${BASE}`],
+  ['html', `2) ${BASE}\n*x*`],
+  ['html', `3) ${BASE}\n_x_`],
+  ['html', `4) ${BASE}\n/x/`],
+  ['html', `5) ${BASE}\n&#42;x&#42; &#95;x&#95; &#47;x&#47;`],
+  ['html', `6) ${BASE}\n*${ZWS}x*${ZWS} _${ZWS}x_${ZWS} /${ZWS}x/${ZWS}`],
+  ['html', `7) ${BASE}\n\\*x\\* \\_x\\_ \\/x\\/`],
+  ['markdown', '8) **bold** __italic__ [link](https://eitaa.com) `code`'],
+  [null, '9) **bold** __italic__ [link](https://eitaa.com) `code` *x* _x_ /x/'],
+];
+
+export async function runFmt2Diag() {
+  const m = await testMapping();
+  if (!m) return { ok: false, error: 'no test mapping' };
+  const out = [];
+  for (const [mode, text] of FMT2) {
+    const params = { chat_id: m.chat, title: 'tg-diag-fmt2', text };
+    if (mode) params.parse_mode = mode;
+    const r = await eitaaCallOnce(m.token, 'sendMessage', params);
+    out.push(`${text.slice(0, 2)} ${r.ok ? 'ok' : describeFailure(r).slice(0, 80)}`);
+  }
+  return { ok: true, sent: out };
+}
+
 // ── /eitaa_diag methods ─────────────────────────────────────────────────────
 
 const CAP_KEYS = { e: 'editMethod', c: 'editCaptionMethod', d: 'deleteMethod' };
