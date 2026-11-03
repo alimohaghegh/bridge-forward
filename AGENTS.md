@@ -174,8 +174,12 @@ The platform manages the bot's webhook for you, derived from your deployed
   `.github/workflows/drain.yml` re-runs it every minute (`__drain`, Bale and
   Eitaa), dispatched by the Cloudflare Worker's cron (GitHub `schedule`
   never fired here).
-  Deleted posts are found by probing `editMessageReplyMarkup` ("message to
-  edit not found"). Raw SELECTs must use `db.all`/`db.get`, not `db.run`.
+  Deleted posts are found by `lib/post_check.js`: an empty
+  `setMessageReaction` (MESSAGE_ID_INVALID = deleted), confirmed by a
+  forward to the owner; `editMessageReplyMarkup` answers from a stale copy
+  until the channel's next post. Times compared across runs use the
+  database clock (`DB_NOW`, `DB_NOW_MS` in util.js): the machines' clocks
+  differ by up to ~100 s. Raw SELECTs must use `db.all`/`db.get`, not `db.run`.
 - Albums: one update per item; `lib/album.js` collects them in the DB and the
   first item's run sends them with `sendMediaGroup`.
 - Privacy: never store or log message contents; only ids, state, counters

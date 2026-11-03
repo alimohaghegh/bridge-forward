@@ -26,7 +26,8 @@ import { getChannel, countChannelDelivery, telegramChannelTitle } from './channe
 import { recordBaleSuccess, recordBaleFailure, noteError } from './store.js';
 import { getSetting, setSetting } from './eitaa.js';
 import { T } from './texts.js';
-import { now, rowsOf, deletedPostAnswer, DB_NOW } from './util.js';
+import { now, rowsOf, DB_NOW } from './util.js';
+import { channelPostGone } from './post_check.js';
 
 const LOCK_SECONDS = 40;
 const PERMANENT = new Set(['too_large', 'download', 'unsupported', 'rejected']);
@@ -414,8 +415,7 @@ async function probeDeletions(link, deadline, force) {
   for (const row of rows) {
     if (Date.now() > deadline) break;
     const mid = Number(row.tg_message_id);
-    // Asked twice, so a one-off glitch can't delete a post.
-    if ((await postGone(link.tgChannelId, mid)) && (await postGone(link.tgChannelId, mid))) {
+    if (await channelPostGone(link.tgChannelId, mid, link.ownerTgId)) {
       await enqueueDelete(link.tgChannelId, mid);
       gone++;
       probeStats.gone++;
@@ -425,15 +425,6 @@ async function probeDeletions(link, deadline, force) {
       UPDATE mirrored SET checked_at = ${now()} WHERE tg_chat_id = ${link.tgChannelId} AND tg_message_id = ${mid}`);
   }
   return gone;
-}
-
-async function postGone(chatId, messageId) {
-  try {
-    await api.editMessageReplyMarkup({ chat_id: chatId, message_id: messageId });
-    return false;
-  } catch (e) {
-    return deletedPostAnswer(e);
-  }
 }
 
 // Sends what is queued for one channel. Safe to call from any run: if

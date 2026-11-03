@@ -22,7 +22,8 @@ import {
   eitaaCall, classifyEitaa, isTemporary, messageIdOf, eitaaCaps, channelToken, describeFailure,
 } from './eitaa.js';
 import { toEitaaChunks, toEitaaCaption } from './eitaa_html.js';
-import { MAX_FILE_BYTES, now, rowsOf, sleep, deletedPostAnswer, DB_NOW } from './util.js';
+import { MAX_FILE_BYTES, now, rowsOf, sleep, DB_NOW } from './util.js';
+import { channelPostGone } from './post_check.js';
 import { E } from './texts.js';
 
 const LOCK_SECONDS = 40;
@@ -680,15 +681,6 @@ async function tryAutoEdit(ch, post, row, ids) {
 
 // ── Deletions ───────────────────────────────────────────────────────────────
 
-async function postGone(chatId, messageId) {
-  try {
-    await api.editMessageReplyMarkup({ chat_id: chatId, message_id: messageId });
-    return false;
-  } catch (e) {
-    return deletedPostAnswer(e);
-  }
-}
-
 async function onDeleted(ch, row) {
   const caps = await eitaaCaps();
   const ids = JSON.parse(row.eitaa_ids || '[]').filter(Boolean);
@@ -746,8 +738,7 @@ export async function sweepDeletions(tgChannelId, { deadline, force } = {}) {
     if (Date.now() > deadline) break;
     if (row.had_markup && canEdit) continue;
     const mid = Number(row.tg_message_id);
-    // Asked twice, so a one-off glitch can't count as a deletion.
-    if ((await postGone(tgChannelId, mid)) && (await postGone(tgChannelId, mid))) {
+    if (await channelPostGone(tgChannelId, mid, ch.ownerTgId)) {
       await onDeleted(ch, row);
       gone++;
     }

@@ -1,5 +1,6 @@
 // Stand-in for the platform SDK: nothing here talks to the network.
-export const api = new Proxy({}, { get: () => async () => { throw new Error('api not available in tests'); } });
+// A test may answer a method by setting it (api.getMe = async () => …).
+export const api = new Proxy({}, { get: (t, k) => t[k] || (async () => { throw new Error('api not available in tests'); }) });
 // A test may answer requests by setting globalThis.__testFetch.
 export const fetch = Object.assign(async (...args) => {
   if (globalThis.__testFetch) return globalThis.__testFetch(...args);
