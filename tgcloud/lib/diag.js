@@ -209,21 +209,25 @@ const BURST_CHANNEL = -42;
 export async function runBurstPrepare() {
   const owner = await getUser(OWNER_TELEGRAM_ID);
   if (!owner || !owner.baleChatId) return { ok: false, error: 'owner not linked' };
-  await cleanupBurst(owner.baleChatId, 0);
+  await cleanupBurst(owner.baleChatId);
   await db.run(sql`DELETE FROM debug_events`);
   await saveChannel(BURST_CHANNEL, owner.baleChatId, OWNER_TELEGRAM_ID);
+  // Bale calls are counted from this row on (a time window also caught the
+  // previous test's messages).
+  const last = await db.get(sql`SELECT max(id) AS id FROM bale_calls`);
+  const st = { atMs: Date.now(), fromCallId: Number(last && last.id) || 0 };
   await db.run(sql`
-    INSERT INTO eitaa_settings (key, value, updated_at) VALUES ('burst', ${JSON.stringify({ atMs: Date.now() })}, ${Math.floor(Date.now() / 1000)})
+    INSERT INTO eitaa_settings (key, value, updated_at) VALUES ('burst', ${JSON.stringify(st)}, ${Math.floor(Date.now() / 1000)})
     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
   return { ok: true };
 }
 
-async function cleanupBurst(baleChatId, sinceMs) {
+async function cleanupBurst(baleChatId, fromCallId) {
   let deleted = 0;
-  if (sinceMs) {
+  if (fromCallId !== undefined) {
     const sent = await db.all(sql`
       SELECT DISTINCT result_id FROM bale_calls
-      WHERE method = 'sendMessage' AND ok = 1 AND chat_id = ${baleChatId} AND at_ms >= ${sinceMs} AND result_id IS NOT NULL`);
+      WHERE method = 'sendMessage' AND ok = 1 AND chat_id = ${baleChatId} AND id > ${fromCallId} AND result_id IS NOT NULL`);
     for (const r of sent) {
       const d = await baleCall('deleteMessage', { chat_id: baleChatId, message_id: r.result_id });
       if (d.ok) deleted++;
@@ -245,7 +249,7 @@ export async function runBurstReport() {
   const mirrored = (await db.get(sql`SELECT count(*) AS n FROM mirrored WHERE tg_chat_id = ${BURST_CHANNEL}`)).n;
   const sends = await db.get(sql`
     SELECT count(*) AS attempts, count(DISTINCT call_id) AS calls, sum(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS ok
-    FROM bale_calls WHERE method = 'sendMessage' AND chat_id = ${owner.baleChatId} AND at_ms >= ${st.atMs - 120000}`);
+    FROM bale_calls WHERE method = 'sendMessage' AND chat_id = ${owner.baleChatId} AND id > ${Number(st.fromCallId) || 0}`);
   const errors = (await getSetting('errors', [])).filter((e) => e.at * 1000 >= st.atMs - 1000)
     .map((e) => `${e.where}: ${e.name} ${e.msg}`.slice(0, 120));
   // What happened, from the debug events.
@@ -298,6 +302,6 @@ export async function runBurstReport() {
     twice: twice.slice(0, 8),
   };
   await db.run(sql`DELETE FROM debug_events`);
-  const deleted = await cleanupBurst(owner.baleChatId, st.atMs - 120000);
+  const deleted = await cleanupBurst(owner.baleChatId, Number(st.fromCallId) || 0);
   return { ok: true, claimed, queuedLeft: left, mirrored, sent: sends, duplicates: (sends.ok || 0) - mirrored, errors, debug, deletedAfter: deleted };
 }
