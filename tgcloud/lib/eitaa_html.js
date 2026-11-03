@@ -7,7 +7,8 @@
 // strikethrough, spoiler, blockquote, custom emoji… become plain text and are
 // reported as issues. EitaaYar doesn't parse a tag that contains a line
 // break (it prints it as text), so every tag is closed and reopened at each
-// line break — it looks the same.
+// line break — it looks the same. Hashtags, mentions and written urls are
+// left out of tags (see outsideAuto).
 //
 // EitaaYar places each tag by searching for the tagged text from the start
 // of the message (seen live: in "test … <b>test</b>" the bold lands on the
@@ -53,6 +54,28 @@ function pushPerLine(text, spans, s) {
   }
 }
 
+// Eitaa links hashtags, mentions and written urls itself and then drops a
+// tag that covers one (seen live: a bold line starting with a hashtag came
+// out plain). Tags are therefore cut around those parts.
+function outsideAuto(text, spans, entities) {
+  const auto = normalizeEntities(text, entities).filter((e) => AUTO_TYPES.has(e.type));
+  if (!auto.length) return spans;
+  let out = spans;
+  for (const a of auto) {
+    const next = [];
+    for (const s of out) {
+      if (s.end <= a.start || s.start >= a.end) {
+        next.push(s);
+        continue;
+      }
+      if (s.start < a.start && text.slice(s.start, a.start).trim()) next.push({ ...s, end: a.start });
+      if (s.end > a.end && text.slice(a.end, s.end).trim()) next.push({ ...s, start: a.end });
+    }
+    out = next;
+  }
+  return out.sort((a, b) => a.start - b.start || b.end - a.end || a.index - b.index);
+}
+
 // Spans with their open/close tags, plus the entity types that were lost.
 function htmlSpans(text, entities, tags) {
   const allowed = new Set((tags || []).filter((t) => EMITTABLE.has(t)));
@@ -77,7 +100,7 @@ function htmlSpans(text, entities, tags) {
     pushPerLine(text, spans, { ...s, open: `<${tag}>`, close: `</${tag}>` });
   }
   spans.sort((a, b) => a.start - b.start || b.end - a.end || a.index - b.index);
-  return { spans, issues };
+  return { spans: outsideAuto(text, spans, entities), issues };
 }
 
 // Invisible marks: a code of equal length per duplicated piece, so no code

@@ -282,6 +282,24 @@ const FMT3 = [
 
 // fmt4: does a text that starts with * _ / switch Eitaa's HTML off? Each is
 // its own message, labels at the end (the start must stay the variant).
+const FMT5 = [
+  '<b>#tag | bold after a hashtag</b> (5-1)',
+  '#tag<b> | bold after a hashtag</b> (5-2)',
+  '<b>#tag</b> | bold hashtag only (5-3)',
+  '<b>bold with #tag inside</b> (5-4)',
+];
+
+export async function runFmt5Diag() {
+  const m = await testMapping();
+  if (!m) return { ok: false, error: 'no test mapping' };
+  const out = [];
+  for (const text of FMT5) {
+    const r = await eitaaCallOnce(m.token, 'sendMessage', { chat_id: m.chat, title: 'tg-diag-fmt5', text, parse_mode: 'html' });
+    out.push(`${text.slice(-5)} ${r.ok ? 'ok' : describeFailure(r).slice(0, 80)}`);
+  }
+  return { ok: true, sent: out };
+}
+
 const FMT4 = [
   ['tg-diag-fmt4', '*test*\n<b>bold</b> <i>italic</i> (4-1)'],
   ['tg-diag-fmt4', '\u200B*test*\n<b>bold</b> <i>italic</i> (4-2)'],

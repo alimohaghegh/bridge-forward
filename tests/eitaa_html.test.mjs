@@ -119,7 +119,7 @@ test('codes never contain each other, even with many duplicates', () => {
 
 test('touching pieces of the same format are joined (no "</b><b>")', () => {
   const r = one('#tag rest', [{ type: 'hashtag', offset: 0, length: 4 }, { type: 'bold', offset: 0, length: 4 }, { type: 'bold', offset: 4, length: 5 }]);
-  assert.equal(r.chunks[0].text, '<b>#tag rest</b>');
+  assert.equal(r.chunks[0].text, '#tag<b> rest</b>');
 });
 
 test('a format spanning a line break is closed and reopened per line', () => {
@@ -136,5 +136,10 @@ test('the real post: bold over a hashtag, italic poem over two lines', () => {
   const html = r.chunks[0].text;
   assert.ok(!html.includes('</b><b>'));
   for (const [, inner] of html.matchAll(/<(b|i)>([^<]*)<\/\1>/g)) assert.ok(!inner.includes('\n'), 'no tag spans a line break');
-  assert.equal(html, '<b>#گزارش_تصویری | شب نخست</b>\n\n<i>ز عزم توست ولایت</i>\n<i>ز صبر توست رسالت</i>\n\nپایان');
+  assert.equal(html, '#گزارش_تصویری<b> | شب نخست</b>\n\n<i>ز عزم توست ولایت</i>\n<i>ز صبر توست رسالت</i>\n\nپایان');
+});
+
+test('tags are cut around hashtags, mentions and written urls', () => {
+  const r = one('see #tag and @me now', [{ type: 'bold', offset: 0, length: 20 }, { type: 'hashtag', offset: 4, length: 4 }, { type: 'mention', offset: 13, length: 3 }]);
+  assert.equal(r.chunks[0].text, '<b>see </b>#tag<b> and </b>@me<b> now</b>');
 });

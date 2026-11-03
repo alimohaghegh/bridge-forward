@@ -68,7 +68,7 @@ jobs:
           ARG: ${{ inputs.arg }}
         run: |
           case "$ARG" in '') VALUE=true;; *[!0-9]*) echo "arg must be a number"; exit 1;; *) VALUE=$ARG;; esac
-          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4) ;; *) echo "unknown probe"; exit 1;; esac
+          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4|__eitaa_fmt5) ;; *) echo "unknown probe"; exit 1;; esac
           bash scripts/run-and-annotate.sh "$PROBE" "{ $PROBE: $VALUE }" || true
 
       - name: Probe (run 2)
@@ -77,6 +77,6 @@ jobs:
           PROBE: ${{ inputs.probe }}
         run: |
           # Probes that post messages run once.
-          case "$PROBE" in __eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4) exit 0;; esac
-          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4) ;; *) echo "unknown probe"; exit 1;; esac
+          case "$PROBE" in __eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4|__eitaa_fmt5) exit 0;; esac
+          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4|__eitaa_fmt5) ;; *) echo "unknown probe"; exit 1;; esac
           bash scripts/run-and-annotate.sh "$PROBE" "{ $PROBE: true }" || true
