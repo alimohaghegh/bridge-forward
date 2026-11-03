@@ -75,3 +75,43 @@ test('long text splits at paragraphs without breaking tags or losing text', () =
   }
   assert.equal(r.chunks.map((c) => c.text.replace(/<\/?b>/g, '')).join('').replace(/\s/g, ''), text.replace(/\s/g, ''));
 });
+
+// EitaaYar places tags by searching for their text from the message start.
+const MARKS = /[⁠​]/g;
+test('a tagged word that also appears earlier is made unique (invisibly)', () => {
+  const r = one('test test', [{ type: 'bold', offset: 5, length: 4 }]);
+  const html = r.chunks[0].text;
+  assert.match(html, /^test <b>test[⁠​]+<\/b>$/);
+  const inner = html.match(/<b>(.*)<\/b>/)[1];
+  assert.equal(html.replace(/<[^>]+>/g, '').indexOf(inner), 5);
+});
+
+test('words that appear once are left untouched', () => {
+  assert.equal(one('a bold b', [{ type: 'bold', offset: 2, length: 4 }]).chunks[0].text, 'a <b>bold</b> b');
+});
+
+test('the Telegram test post with the same word everywhere: every tag finds its own place', () => {
+  const lines = ['*test*', '_test_', '/test/', 'test', 'test', 'test', 'test', 'test', 'test', 'test', 'test'];
+  const at = (i) => lines.slice(0, i).join('\n').length + (i ? 1 : 0);
+  const e = (type, i, extra) => ({ type, offset: at(i), length: 4, ...extra });
+  const ents = [e('text_link', 3, { url: 'https://example.com/' }), e('bold', 5), e('italic', 6), e('underline', 7), e('strikethrough', 8), e('code', 9), e('blockquote', 10)];
+  const html = one(lines.join('\n'), ents).chunks[0].text;
+  const plain = html.replace(/<[^>]+>/g, '');
+  const codes = new Set();
+  for (const [, inner] of html.matchAll(/<(?:a [^>]*|b|i|code)>([^<]*)<\//g)) {
+    assert.equal(plain.indexOf(inner), plain.lastIndexOf(inner), 'each tagged text occurs once');
+    codes.add(inner);
+  }
+  assert.equal(codes.size, 4);
+  assert.equal(plain.replace(MARKS, ''), lines.join('\n'));
+});
+
+test('codes never contain each other, even with many duplicates', () => {
+  const text = Array(20).fill('w').join(' ');
+  const ents = Array.from({ length: 20 }, (_, i) => ({ type: 'bold', offset: i * 2, length: 1 }));
+  const html = one(text, ents).chunks[0].text;
+  const plain = html.replace(/<[^>]+>/g, '');
+  const inners = [...html.matchAll(/<b>([^<]*)<\/b>/g)].map((m) => m[1]);
+  assert.equal(new Set(inners).size, 20);
+  for (const x of inners) assert.equal(plain.indexOf(x), plain.lastIndexOf(x));
+});

@@ -6,6 +6,12 @@
 // never emitted: pre becomes one <code> per line, and underline,
 // strikethrough, spoiler, blockquote, custom emoji… become plain text and are
 // reported as issues.
+//
+// EitaaYar places each tag by searching for the tagged text from the start
+// of the message (seen live: in "test … <b>test</b>" the bold lands on the
+// first "test"). So when a tagged piece of text also occurs elsewhere in the
+// message, invisible word joiners (U+2060) are put after its first
+// character — a different number for each such piece — to make it unique.
 
 import { AUTO_TYPES, normalizeEntities, renderNested, chunkRanges } from './entities.js';
 
@@ -71,7 +77,36 @@ function htmlSpans(text, entities, tags) {
   return { spans, issues };
 }
 
-const htmlHooks = { open: (s) => s.open, close: (s) => s.close, text: (t) => escapeText(t) };
+// Invisible marks: a code of equal length per duplicated piece, so no code
+// can be found inside another.
+const MARKS = ['\u2060', '\u200B'];
+
+// { absolute end position of a span: invisible code } for every tagged
+// piece whose text also appears anywhere else in the whole text.
+function uniqueMarks(text, spans) {
+  const dup = spans.filter((s) => {
+    const inner = text.slice(s.start, s.end);
+    return text.indexOf(inner) !== s.start || text.indexOf(inner, s.start + 1) !== -1;
+  });
+  const plan = new Map();
+  if (!dup.length) return plan;
+  const width = Math.max(1, Math.ceil(Math.log2(dup.length + 1)));
+  dup.forEach((s, i) => {
+    let code = '';
+    for (let b = width - 1; b >= 0; b--) code += MARKS[((i + 1) >> b) & 1];
+    plan.set(s.end, (plan.get(s.end) || '') + code);
+  });
+  return plan;
+}
+
+function hooksFor(plan) {
+  return {
+    open: (s) => s.open,
+    close: (s) => s.close,
+    // Every span end is a cut, so its code goes right before the closing tag.
+    text: (t, from) => escapeText(t) + (plan.get(from + t.length) || ''),
+  };
+}
 
 // Converts a text (or caption) into chunks that each fit `limit`.
 // opts: { tags, limit, countMarkup (limit applies to the HTML source),
@@ -88,9 +123,10 @@ export function toEitaaChunks(text, entities, opts) {
     useHtml = false;
     issues.add('format');
   }
+  const hooks = hooksFor(uniqueMarks(text, spans));
   const render = (from, to) => {
     const plain = text.slice(from, to);
-    const out = useHtml ? renderNested(text, spans, from, to, htmlHooks) : plain;
+    const out = useHtml ? renderNested(text, spans, from, to, hooks) : plain;
     return { text: out, size: opts.countMarkup === false ? plain.length : out.length };
   };
   const chunks = chunkRanges(text, opts.limit, render).map((c) => ({ text: c.text, html: useHtml }));

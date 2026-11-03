@@ -184,6 +184,9 @@ The platform manages the bot's webhook for you, derived from your deployed
   loaded by `loadBaleFormat()` at the start of each handler; the diagnostic
   starts from the current format). Eitaa's tag set is fixed in code: a
   stored "nothing ticked" answer once switched all formatting off.
+  EitaaYar places each tag by searching for its text from the message
+  start, so a tagged piece whose text occurs elsewhere gets an invisible,
+  equal-length code (U+2060/U+200B) before its closing tag.
 - `npm test` (node:test, `tests/`, SDK stubbed by `tests/register.mjs`)
   runs in the deploy workflow before anything is pushed.
 - `/start` shows one main menu (`lib/eitaa_link.js` showMenu); its first
