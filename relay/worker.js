@@ -5,12 +5,17 @@
    https://eitaayar.ir/api/<token>/<method>, and nothing is stored or
    logged. The key below is the PUBLIC half: not a secret.
    /ping (no signature) only reports whether eitaayar.ir answers.
+   Its cron trigger (every 5 minutes) starts the bot's "Channel mirror
+   retry" workflow on GitHub, because GitHub's own schedule is unreliable.
+   That needs the Worker secret GH_TOKEN: a fine-grained token limited to
+   this repository with Actions: read and write.
    Written without line comments or reliance on ASI, so it can be pasted
    as one line into the dashboard editor. */
 const PUBLIC_KEY = { kty: "EC", crv: "P-256", x: "-O0cbo356NG05SNUSc5BSO2j1QkzzByS9iCV6912R6o", y: "5j57cIiwCSP7f5KEt_v1THLQkqQH_sju2Hg0HIpC1ds" };
 const ORIGIN = "https://eitaayar.ir";
 const MAX_SKEW_SECONDS = 300;
 const PATH = /^\/api\/[A-Za-z0-9:_-]+\/[A-Za-z]+$/;
+const DISPATCH = "https://api.github.com/repos/alimohaghegh/bridge-forward/actions/workflows/drain.yml/dispatches";
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), { status: status, headers: { "content-type": "application/json" } });
@@ -37,7 +42,20 @@ async function verified(request, path) {
   }
 }
 
+async function startRetryRun(env) {
+  if (!env.GH_TOKEN) return console.log("GH_TOKEN is not set; nothing to start");
+  const r = await fetch(DISPATCH, {
+    method: "POST",
+    headers: { authorization: "Bearer " + env.GH_TOKEN, accept: "application/vnd.github+json", "user-agent": "bridge-relay", "content-type": "application/json" },
+    body: JSON.stringify({ ref: "main" })
+  });
+  console.log("dispatch drain.yml: HTTP " + r.status);
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(startRetryRun(env));
+  },
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/ping") {
