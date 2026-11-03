@@ -21,7 +21,7 @@ import { clearPending, activePending, telegramChannelTitle } from '../lib/channe
 import { hasPendingCode, pollBale, notifyLinked } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
-import { runDiag, runBaleProbe, formatProbe, runMirrorTest } from '../lib/diag.js';
+import { runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState } from '../lib/diag.js';
 import {
   touchUser, getUser, claimMessage, maybeCleanup, countDelivery, isOwner, recordBaleSuccess, recordBaleFailure,
 } from '../lib/store.js';
@@ -174,6 +174,7 @@ const CI_RUNS = {
   __setup: runSetup,
   __diag: runDiag,
   __mirrortest: runMirrorTest,
+  __bale_state: runBaleState,
   __eitaa: runEitaaCiProbe,
   __eitaa_state: runEitaaState,
   // Retry queued channel posts and find deletions (Bale and Eitaa side by side).

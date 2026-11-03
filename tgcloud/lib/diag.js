@@ -95,3 +95,44 @@ export async function runMirrorTest() {
   out.ok = out.post === 'empty' && out.edit === 'empty' && out.delete === 'empty' && !out.mirroredAfterDelete && out.jobsLeft === 0;
   return out;
 }
+
+// CI probe (__bale_state): the Bale channel mirror's state as counts and
+// ages (seconds) only — no ids or contents (CI logs are public). For the
+// newest mirrored posts it also asks Telegram whether they still exist.
+export async function runBaleState() {
+  const t = Math.floor(Date.now() / 1000);
+  const channels = await db.all(sql`SELECT tg_channel_id, lock_until, probed_at, delivered_count, failed_count FROM channels`);
+  const out = { channels: [] };
+  for (const ch of channels) {
+    const id = ch.tg_channel_id;
+    const m = await db.get(sql`
+      SELECT count(*) AS n, sum(CASE WHEN created_at > ${t - 47 * 3600} THEN 1 ELSE 0 END) AS recent,
+             max(created_at) AS newest, min(checked_at) AS oldest_check, max(checked_at) AS newest_check
+      FROM mirrored WHERE tg_chat_id = ${id}`);
+    const jobs = await db.all(sql`SELECT kind, attempts, last_reason, created_at FROM outbox WHERE tg_channel_id = ${id}`);
+    const last = await db.all(sql`
+      SELECT tg_message_id, created_at, checked_at FROM mirrored WHERE tg_chat_id = ${id} ORDER BY tg_message_id DESC LIMIT 3`);
+    const probes = [];
+    for (const r of last) {
+      let answer;
+      try {
+        await api.editMessageReplyMarkup({ chat_id: id, message_id: r.tg_message_id });
+        answer = 'ok';
+      } catch (e) {
+        answer = `${e.code} ${String(e.description).slice(0, 60)}`;
+      }
+      probes.push({ ageS: t - r.created_at, checkedAgoS: r.checked_at ? t - r.checked_at : null, telegram: answer });
+    }
+    const tracked = await db.get(sql`SELECT count(*) AS n, max(message_id) AS top FROM delivered WHERE chat_id = ${id}`);
+    out.channels.push({
+      lockHeld: ch.lock_until > t, probedAgoS: ch.probed_at ? t - ch.probed_at : null,
+      delivered: ch.delivered_count, failed: ch.failed_count,
+      mirrored: { total: m.n, last47h: m.recent || 0, newestAgoS: m.newest ? t - m.newest : null },
+      jobs: jobs.map((j) => ({ kind: j.kind, attempts: j.attempts, reason: j.last_reason, ageS: t - j.created_at })),
+      newestPosts: probes,
+      seenPosts: tracked.n,
+      newestSeenAboveMirrored: Boolean(tracked.top && last[0] && tracked.top > last[0].tg_message_id),
+    });
+  }
+  return out;
+}
