@@ -4,9 +4,9 @@ name: Channel mirror retry
 # still queued (e.g. the target was unreachable and no new post arrived
 # since) and picks up deleted posts. Every channel update already does this;
 # this run covers quiet periods. Prints only counts per status (public logs).
+# Started every 5 minutes by the Cloudflare relay's cron trigger
+# (relay/worker.js): GitHub's own `schedule` never fired for this repo.
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 concurrency:

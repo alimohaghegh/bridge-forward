@@ -164,11 +164,13 @@ The platform manages the bot's webhook for you, derived from your deployed
   CI by `scripts/write-config.mjs` and is git-ignored. Never commit or log it.
 - **Deploy only via GitHub Actions** (`.github/workflows/deploy.yml`): a local
   `npx tgcloud push` without `config.js` would deploy a broken bot.
-- Channels: `/channel` links a Telegram channel to a Bale channel or group
+- Channels: «پل کانال به کانال (به بله)» (or `/channel`) links a Telegram channel to a Bale channel or group
   (`lib/channels.js`; a code posted in the Bale chat proves access).
   Posts, edits and deletions go through a durable ordered queue
   (`lib/mirror.js`, table `outbox`) that keeps each job until Bale accepts it;
-  `.github/workflows/drain.yml` re-runs it every 5 min (`__drain`, Bale and Eitaa).
+  `.github/workflows/drain.yml` re-runs it every 5 min (`__drain`, Bale and
+  Eitaa), dispatched by the Cloudflare Worker's cron (GitHub `schedule`
+  never fired here).
   Deleted posts are found by probing `editMessageReplyMarkup` ("message to
   edit not found"). Raw SELECTs must use `db.all`/`db.get`, not `db.run`.
 - Albums: one update per item; `lib/album.js` collects them in the DB and the
@@ -190,7 +192,10 @@ The platform manages the bot's webhook for you, derived from your deployed
 - `npm test` (node:test, `tests/`, SDK stubbed by `tests/register.mjs`)
   runs in the deploy workflow before anything is pushed.
 - `/start` shows one main menu (`lib/eitaa_link.js` showMenu); its first
-  button runs the old Bale /start (`lib/start.js`). All old commands remain.
+  buttons open the Bale screens (`lib/bale_ui.js`) and the Eitaa screens
+  (`lib/eitaa_link.js`); screens are shown with `show()` (`lib/ui.js`). Users
+  never need to type a command; the old ones still work. The menu text is
+  U+2063: Telegram refuses U+2800, U+200B and U+3164 as "empty".
 - Eitaa: Telegram channel → Eitaa channel via EitaaYar (`lib/eitaa.js`,
   `https://eitaayar.ir/api/<token>/<method>`; only sendMessage/sendFile, one
   file per post, no album/edit/delete). `lib/eitaa_mirror.js` keeps ids and
@@ -205,7 +210,7 @@ The platform manages the bot's webhook for you, derived from your deployed
   the Cloudflare Worker in `relay/worker.js` (deployed by hand in the
   owner's Cloudflare dashboard, not by tgcloud), signed with
   `EITAA_RELAY_KEY`; `EITAA_RELAY_URL` names it.
-  Owner `/eitaa_diag [fmt|methods|size|gateway]` stores findings
+  Owner `/eitaa_diag [methods|size]` stores findings
   (tags, limits, methods) in `eitaa_settings`.
 - CI logs are public (public repo): `tgcloud run` outputs must hold counts
   and codes only, never ids, tokens or contents.

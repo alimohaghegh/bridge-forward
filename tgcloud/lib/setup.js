@@ -19,30 +19,29 @@ import { toEitaaChunks } from './eitaa_html.js';
 import { buildParts } from './eitaa_mirror.js';
 import { eitaaCaps, encryptToken, decryptToken, advancedModeEnabled, simpleModeEnabled, webCryptoAvailable } from './eitaa.js';
 
+// Users need only the menu: everything else is a button. (The older
+// commands — /link, /status, /test, /unlink, /channel, /channels, /cancel —
+// still work for those who type them.)
 const USER_COMMANDS = [
   { command: 'start', description: 'منوی اصلی' },
-  { command: 'link', description: 'گرفتن کد اتصال جدید' },
-  { command: 'status', description: 'وضعیت اتصال' },
-  { command: 'test', description: 'ارسال پیام آزمایشی به بله' },
-  { command: 'unlink', description: 'قطع اتصال حساب بله' },
-  { command: 'channel', description: 'اتصال کانال تلگرام به کانال بله' },
-  { command: 'channels', description: 'کانال‌های متصل و قطع اتصال' },
-  { command: 'cancel', description: 'لغو کار در جریان' },
   { command: 'help', description: 'راهنما' },
 ];
 
 const OWNER_COMMANDS = [
   ...USER_COMMANDS,
+  { command: 'requests', description: 'درخواست‌های ایتا در انتظار (مدیر)' },
   { command: 'stats', description: 'آمار (مدیر)' },
   { command: 'users', description: 'فهرست کاربران (مدیر)' },
   { command: 'block', description: 'مسدود کردن کاربر (مدیر)' },
   { command: 'unblock', description: 'رفع مسدودی کاربر (مدیر)' },
-  { command: 'diag', description: 'بررسی اتصال به بله (مدیر)' },
-  { command: 'sync', description: 'ارسال فوری صف کانال‌ها (مدیر)' },
-  { command: 'requests', description: 'درخواست‌های ایتا در انتظار (مدیر)' },
-  { command: 'bale_diag', description: 'تشخیص بله: fmt = قالب‌بندی (مدیر)' },
-  { command: 'eitaa_diag', description: 'تشخیص ایتایار: fmt | methods | size (مدیر)' },
+  { command: 'sync', description: 'ارسال فوری صف کانال‌های بله (مدیر)' },
+  { command: 'bale_diag', description: 'تشخیص بله؛ fmt = قالب‌بندی (مدیر)' },
+  { command: 'eitaa_diag', description: 'تشخیص ایتایار؛ methods | size (مدیر)' },
 ];
+
+// Shown before a user presses START, and in the bot's profile.
+const DESCRIPTION = 'سلام! 👋\nاین ربات پست‌های کانال تلگرام شما را خودکار در کانال یا گروه «بله» و کانال «ایتا»ی شما هم منتشر می‌کند. پیام‌های خودتان را هم می‌تواند به بله برساند.\n\nبرای شروع، دکمهٔ START را بزنید.';
+const SHORT_DESCRIPTION = 'پل کانال تلگرام به بله و ایتا';
 
 async function step(fn) {
   try {
@@ -72,6 +71,8 @@ export async function runSetup() {
 
   out.commands = await step(async () => {
     await api.setMyCommands({ commands: USER_COMMANDS });
+    await api.setMyDescription({ description: DESCRIPTION }).catch(() => null);
+    await api.setMyShortDescription({ short_description: SHORT_DESCRIPTION }).catch(() => null);
     await api.setMyCommands({ commands: OWNER_COMMANDS, scope: { type: 'chat', chat_id: OWNER_TELEGRAM_ID } })
       .catch(() => null); // fails until the owner has started the bot
     return { ok: true };

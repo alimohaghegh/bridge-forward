@@ -1,6 +1,6 @@
 // Telegram channel → Bale channel mirrors: setup checks and storage.
 //
-// Setup (/channel) is two steps in the private chat: the user names their
+// Setup («پل کانال به کانال (به بله)», or /channel) is two steps in the private chat: the user names their
 // Telegram channel (forwarded post, @username or id), then their Bale
 // channel (@username, ble.ir link or id). The bot must be admin in both, and
 // the user must be admin of both (on Bale, via their linked Bale account).
@@ -10,7 +10,7 @@ import { eq, sql } from 'sdk/db';
 import { channels, users } from '../schema.js';
 import { baleCall, classifyError } from './bale.js';
 import { now } from './util.js';
-import { T } from './texts.js';
+import { T, MENU } from './texts.js';
 
 const PENDING_SECONDS = 10 * 60;
 
@@ -177,11 +177,13 @@ export async function confirmBaleTarget(baleChatId) {
 // `target`: { chatId, type, title, posterId?, codeMessageId? }. Tells the
 // user the outcome in Telegram. Returns { ok }.
 export async function linkBaleTarget(tgId, tgChannelId, target) {
-  const tell = (text) => api.sendMessage({ chat_id: tgId, text }).catch(() => null);
+  const tell = (text, keyboard) => api.sendMessage({
+    chat_id: tgId, text, parse_mode: 'HTML', ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}),
+  }).catch(() => null);
 
   const tg = await checkTelegramChannel(tgChannelId, tgId);
   if (!tg.ok) {
-    await tell(tg.text + '\n\nبرای شروع دوباره: /channel');
+    await tell(tg.text);
     return { ok: false };
   }
 
@@ -210,6 +212,8 @@ export async function linkBaleTarget(tgId, tgChannelId, target) {
     await baleCall('deleteMessage', { chat_id: target.chatId, message_id: target.codeMessageId });
   }
   const title = target.title || (target.type === 'group' ? 'گروه بله' : 'کانال بله');
-  await tell(T.chLinked(tg.title, title) + (confirm.canDelete ? '' : '\n\n' + T.chCantDelete));
+  await tell(T.chLinked(tg.title, title) + (confirm.canDelete ? '' : '\n\n' + T.chCantDelete), [
+    [{ text: MENU.baleChannels, callback_data: 'm:bch' }], [{ text: MENU.home, callback_data: 'm:home' }],
+  ]);
   return { ok: true };
 }

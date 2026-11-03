@@ -1,36 +1,31 @@
-// handlers/message.js — every private message: the main menu, commands,
-// linking prompts (Bale account, Bale channel, Eitaa channel) and forwarding
-// to the user's Bale chat. Message contents are never stored or logged.
+// handlers/message.js — every private message: commands, the steps of the
+// linking flows (Bale account, Bale channel, Eitaa channel) and forwarding to
+// the user's Bale chat. Screens and buttons live in lib/ (bale_ui.js,
+// eitaa_link.js). Message contents are never stored or logged.
 
 import { api } from 'sdk';
-import { baleCall, classifyError, isSystemError, safeErrorText } from '../lib/bale.js';
+import { safeErrorText, isSystemError } from '../lib/bale.js';
 import { isSupported, deliver, deliverAlbum } from '../lib/forward.js';
 import { isAlbumItem, collectAlbum, releaseAlbumItems } from '../lib/album.js';
 import { drainAll } from '../lib/mirror.js';
 import { drainEitaa } from '../lib/eitaa_mirror.js';
 import {
-  showMenu, showHelp, isEitaaStep, handleEitaaStep, handleOwnerReply, looksLikeEitaaToken, listRequests,
+  showMenu, showHelp, isEitaaStep, handleEitaaStep, handleOwnerReply, looksLikeEitaaToken, listRequests, cancelStep,
 } from '../lib/eitaa_link.js';
+import { runEitaaDiag, runMethodsDiag, runSizeDiag, runEitaaCiProbe, runEitaaState } from '../lib/eitaa_diag.js';
 import {
-  runEitaaDiag, runFmtDiag, runFmt2Diag, runFmt3Diag, runFmt4Diag, runFmt5Diag, runHealth, runEitaaRender, runEitaaResend, runMethodsDiag, runSizeDiag, runEitaaCiProbe, runEitaaState, gatewayProbe,
-} from '../lib/eitaa_diag.js';
-import { sendLinkInstructions } from '../lib/start.js';
+  sendLinkInstructions, showAccount, showLinked, sendTest, unlinkAccount, showBaleChannels, startBaleChannel, handleBaleStep,
+} from '../lib/bale_ui.js';
 import { loadBaleFormat, runBaleFmtDiag } from '../lib/bale_fmt.js';
-import {
-  listChannels, saveChannel, setPending, clearPending, activePending, telegramChannelRef,
-  checkTelegramChannel, baleChannelRef, checkBaleChannel, telegramChannelTitle, confirmBaleTarget,
-} from '../lib/channels.js';
-import {
-  deletePendingCodes, hasPendingCode, pollBale, notifyLinked, createChannelCode,
-} from '../lib/linking.js';
+import { clearPending, activePending, telegramChannelTitle } from '../lib/channels.js';
+import { hasPendingCode, pollBale, notifyLinked } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
-import { runDiag, runBaleProbe, formatProbe, runDeleteProbe, runMirrorTest } from '../lib/diag.js';
+import { runDiag, runBaleProbe, formatProbe, runMirrorTest } from '../lib/diag.js';
 import {
-  touchUser, getUser, clearLink, claimMessage, maybeCleanup, countDelivery, isOwner,
-  recordBaleSuccess, recordBaleFailure,
+  touchUser, getUser, claimMessage, maybeCleanup, countDelivery, isOwner, recordBaleSuccess, recordBaleFailure,
 } from '../lib/store.js';
-import { T, E, statusText, VERIFY_CHANNEL_BUTTON } from '../lib/texts.js';
+import { T, E, B } from '../lib/texts.js';
 import { TELEGRAM_BOT_USERNAME } from '../lib/util.js';
 
 async function reply(chatId, text, extra) {
@@ -54,14 +49,21 @@ function parseCommand(text) {
 }
 
 // Returns true when the command was handled; unknown commands are forwarded.
+// Every command a user needs is also a button; these remain for those who
+// type them.
 async function handleCommand(cmd, chatId, tgId, user) {
+  const where = { chatId };
   switch (cmd.name) {
     case 'start':
     case 'menu':
-      // The Bale part of the old /start is the menu's first button.
-      await showMenu({ chatId }, tgId);
+      await showMenu(where, tgId);
       return true;
-
+    case 'help':
+      await showHelp(where);
+      return true;
+    case 'status':
+      await showAccount(where, tgId);
+      return true;
     case 'link':
       await sendLinkInstructions(chatId, tgId, {
         fresh: true,
@@ -70,67 +72,25 @@ async function handleCommand(cmd, chatId, tgId, user) {
           : '',
       });
       return true;
-
     case 'unlink':
-      if (!user.baleChatId) {
-        await reply(chatId, T.notLinkedForUnlink);
-        return true;
-      }
-      await clearLink(tgId);
-      await deletePendingCodes(tgId);
-      await baleCall('sendMessage', { chat_id: user.baleChatId, text: T.baleUnlinked });
-      await reply(chatId, T.unlinked);
+      await unlinkAccount(where, tgId);
       return true;
-
-    case 'status':
-      await reply(chatId, statusText(user));
+    case 'test':
+      await sendTest(where, tgId);
       return true;
-
-    case 'help':
-      await showHelp({ chatId });
-      return true;
-
     case 'channel':
-      if (!user.baleChatId) {
-        await reply(chatId, T.chNeedLink);
-        return true;
-      }
-      await setPending(tgId, 'tg_channel');
-      await replyHtml(chatId, T.chStep1);
+      await startBaleChannel(where, tgId);
       return true;
-
     case 'channels':
-      await sendChannelList(chatId, tgId);
+      await showBaleChannels(where, tgId);
       return true;
-
     case 'cancel':
-      if (activePending(user)) {
-        await clearPending(tgId);
-        await reply(chatId, T.chCancelled);
-      } else {
-        await reply(chatId, T.chNothingToCancel);
-      }
+      await cancelStep(where, tgId);
       return true;
-
-    case 'test': {
-      if (!user.baleChatId) {
-        await sendLinkInstructions(chatId, tgId, { prefix: '🔌 هنوز حساب بله‌ای متصل نیست.' });
-        return true;
-      }
-      const r = await baleCall('sendMessage', { chat_id: user.baleChatId, text: T.baleTest });
-      if (r.ok) {
-        await recordBaleSuccess();
-        await reply(chatId, T.testOk);
-      } else {
-        const reason = classifyError(r);
-        if (isSystemError(reason)) await recordBaleFailure('test/' + reason);
-        await reply(chatId, T.fail[reason] || T.fail.rejected);
-      }
-      return true;
-    }
   }
+  if (!isOwner(tgId)) return false;
 
-  if (cmd.name === 'sync' && isOwner(tgId)) {
+  if (cmd.name === 'sync') {
     const r = await drainAll();
     const labels = { empty: 'همه رسیده', retry: 'منتظر بله', busy: 'در حال ارسال', waiting: 'در حال جمع کردن آلبوم', timeout: 'ادامه در نوبت بعد' };
     const lines = [];
@@ -138,107 +98,24 @@ async function handleCommand(cmd, chatId, tgId, user) {
     await reply(chatId, '🔄 ' + (lines.join('\n') || 'کانالی متصل نیست'));
     return true;
   }
-
-  if (cmd.name === 'eitaa_diag' && isOwner(tgId)) {
+  if (cmd.name === 'eitaa_diag') {
     const [sub, extra] = cmd.arg.toLowerCase().split(/\s+/);
-    if (sub === 'fmt') await runFmtDiag();
-    else if (sub === 'fmt2') await reply(chatId, '🔤 ' + JSON.stringify(await runFmt2Diag(), null, 1));
-    else if (sub === 'methods') await runMethodsDiag();
+    if (sub === 'methods') await runMethodsDiag();
     else if (sub === 'size') await runSizeDiag(extra);
-    else if (sub === 'gateway') await reply(chatId, '🌐 ' + JSON.stringify(await gatewayProbe(), null, 1));
     else await runEitaaDiag();
     return true;
   }
-
-  if (cmd.name === 'bale_diag' && isOwner(tgId)) {
+  if (cmd.name === 'bale_diag' || cmd.name === 'diag') {
     if (cmd.arg.toLowerCase() === 'fmt') await runBaleFmtDiag(chatId);
     else await reply(chatId, formatProbe(await runBaleProbe(user.baleChatId, '🔧 آزمایش اتصال (از طرف مدیر ربات)')) + '\n\nقالب‌بندی: /bale_diag fmt');
     return true;
   }
-
-  if (cmd.name === 'requests' && isOwner(tgId)) {
+  if (cmd.name === 'requests') {
     await listRequests(chatId);
     return true;
   }
-
-  if (cmd.name === 'diag' && isOwner(tgId)) {
-    await reply(chatId, formatProbe(await runBaleProbe(user.baleChatId, '🔧 آزمایش اتصال (از طرف مدیر ربات)')));
-    return true;
-  }
-
-  if (ADMIN_COMMANDS.has(cmd.name) && isOwner(tgId)) {
+  if (ADMIN_COMMANDS.has(cmd.name)) {
     await replyHtml(chatId, await runAdminCommand(cmd.name, cmd.arg));
-    return true;
-  }
-  return false;
-}
-
-async function sendChannelList(chatId, tgId) {
-  const list = await listChannels(tgId);
-  if (!list.length) {
-    await reply(chatId, T.chListEmpty);
-    return;
-  }
-  const buttons = [];
-  for (const ch of list) {
-    const title = await telegramChannelTitle(ch.tgChannelId);
-    buttons.push([{ text: T.chUnlinkButton(title), callback_data: `unch:${ch.tgChannelId}` }]);
-  }
-  await reply(chatId, T.chListHeader, { reply_markup: { inline_keyboard: buttons } });
-}
-
-// A reply to a /channel step. Returns true when the message was consumed.
-async function handleChannelStep(step, message, user) {
-  const chatId = message.chat.id;
-  const tgId = message.from.id;
-
-  if (step === 'tg_channel') {
-    const ref = telegramChannelRef(message);
-    if (!ref) {
-      await reply(chatId, T.chStep1Bad);
-      return true;
-    }
-    const tg = await checkTelegramChannel(ref, tgId);
-    if (!tg.ok) {
-      await reply(chatId, tg.text + '\n\nبرای انصراف: /cancel');
-      return true;
-    }
-    await setPending(tgId, 'bale_channel', tg.id);
-    const { code } = await createChannelCode(tgId, tg.id);
-    await replyHtml(chatId, T.chStep2(tg.title, code), {
-      reply_markup: { inline_keyboard: [[{ text: VERIFY_CHANNEL_BUTTON, callback_data: 'verify_ch' }]] },
-    });
-    return true;
-  }
-
-  if (step === 'bale_channel') {
-    const ref = baleChannelRef(message.text);
-    if (!ref) {
-      await reply(chatId, T.chStep2Bad);
-      return true;
-    }
-    await reply(chatId, T.chChecking);
-    // Re-check the Telegram side: rights may have changed meanwhile.
-    const tg = await checkTelegramChannel(user.pendingTgChannel, tgId);
-    if (!tg.ok) {
-      await clearPending(tgId);
-      await reply(chatId, tg.text + '\n\nبرای شروع دوباره: /channel');
-      return true;
-    }
-    const bale = await checkBaleChannel(ref, user.baleChatId, isOwner(tgId));
-    if (!bale.ok) {
-      await reply(chatId, bale.text + '\n\nبرای انصراف: /cancel');
-      return true;
-    }
-    const confirm = await confirmBaleTarget(bale.id);
-    if (!confirm.ok) {
-      await reply(chatId, confirm.text + '\n\nبرای انصراف: /cancel');
-      return true;
-    }
-    await saveChannel(tg.id, bale.id, tgId);
-    await clearPending(tgId);
-    await deletePendingCodes(tgId);
-    await reply(chatId, T.chLinked(tg.title, bale.title) + (confirm.canDelete ? '' : '\n\n' + T.chCantDelete));
     return true;
   }
   return false;
@@ -290,30 +167,29 @@ async function forward(message, user) {
   });
 }
 
-export default async function (message, ctx) {
-  await loadBaleFormat();
-  // Deploy-time setup, reachable only through `tgcloud run` (real updates
-  // always carry ctx.update and never this field).
-  if (!(ctx && ctx.update) && message && message.__setup === true) return runSetup();
-  if (!(ctx && ctx.update) && message && message.__diag === true) return runDiag();
-  if (!(ctx && ctx.update) && message && message.__probe === true) return runDeleteProbe();
-  if (!(ctx && ctx.update) && message && message.__mirrortest === true) return runMirrorTest();
-  if (!(ctx && ctx.update) && message && message.__eitaa === true) return runEitaaCiProbe();
-  if (!(ctx && ctx.update) && message && message.__eitaa_state === true) return runEitaaState();
-  if (!(ctx && ctx.update) && message && message.__health === true) return runHealth();
-  if (!(ctx && ctx.update) && message && message.__eitaa_fmt2 === true) return runFmt2Diag();
-  if (!(ctx && ctx.update) && message && message.__eitaa_fmt3 === true) return runFmt3Diag();
-  if (!(ctx && ctx.update) && message && message.__eitaa_fmt4 === true) return runFmt4Diag();
-  if (!(ctx && ctx.update) && message && message.__eitaa_fmt5 === true) return runFmt5Diag();
-  if (!(ctx && ctx.update) && message && message.__eitaa_render === true) return runEitaaRender();
-  if (!(ctx && ctx.update) && message && message.__eitaa_resend) return runEitaaResend(message.__eitaa_resend);
-  // Scheduled run (GitHub Actions): retry queued channel posts, find
-  // deletions. The output lands in public CI logs: counts only, no ids.
-  if (!(ctx && ctx.update) && message && message.__drain === true) {
+// Runs started by `tgcloud run` from CI (real updates always carry
+// ctx.update and never these fields). Outputs land in public CI logs:
+// counts and codes only.
+const CI_RUNS = {
+  __setup: runSetup,
+  __diag: runDiag,
+  __mirrortest: runMirrorTest,
+  __eitaa: runEitaaCiProbe,
+  __eitaa_state: runEitaaState,
+  // Retry queued channel posts and find deletions (Bale and Eitaa side by side).
+  __drain: async () => {
     const [baleById, eitaa] = await Promise.all([drainAll(), drainEitaa(10000)]);
     const bale = {};
     for (const status of Object.values(baleById)) bale[status] = (bale[status] || 0) + 1;
     return { bale, eitaa };
+  },
+};
+
+export default async function (message, ctx) {
+  await loadBaleFormat();
+  if (!(ctx && ctx.update) && message) {
+    const run = Object.keys(CI_RUNS).find((k) => message[k] === true);
+    if (run) return CI_RUNS[run]();
   }
 
   if (!message || !message.chat || message.chat.type !== 'private' || !message.from || message.from.is_bot) return;
@@ -341,7 +217,7 @@ export default async function (message, ctx) {
       const result = await pollBale();
       await notifyLinked(result.linkedNow, tgId);
       if (result.linkedNow.has(tgId)) {
-        await reply(chatId, T.verifySuccess);
+        await showLinked(chatId);
         user = await getUser(tgId);
         if (cmd && (cmd.name === 'start' || cmd.name === 'status')) return;
       }
@@ -349,11 +225,11 @@ export default async function (message, ctx) {
 
     const step = activePending(user);
     if (step && cmd) {
-      // Any command ends a pending /channel setup (/channel restarts it).
+      // Any command ends a pending step.
       if (cmd.name !== 'cancel') await clearPending(tgId);
     } else if (step && isEitaaStep(step)) {
       if (await handleEitaaStep(step, message, user)) return;
-    } else if (step && (await handleChannelStep(step, message, user))) {
+    } else if (step && (await handleBaleStep(step, message, user))) {
       return;
     }
 
@@ -366,10 +242,10 @@ export default async function (message, ctx) {
 
     if (cmd && (await handleCommand(cmd, chatId, tgId, user))) return;
 
+    // Not linked to Bale: nothing to forward to. Show the menu instead of a
+    // linking code — most users come for the channel bridges.
     if (!user.baleChatId) {
-      await sendLinkInstructions(chatId, tgId, {
-        prefix: '⚠️ پیام شما فرستاده نشد، چون هنوز حساب بله‌ای متصل نکرده‌اید.',
-      });
+      await showMenu({ chatId }, tgId, B.notDelivered);
       return;
     }
 

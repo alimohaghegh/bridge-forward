@@ -1,4 +1,4 @@
-// Owner-only EitaaYar diagnostics (/eitaa_diag …) and the CI probe
+// Owner-only EitaaYar diagnostics (/eitaa_diag [methods|size]) and the CI probes
 // (`npx tgcloud run handlers/message '{ __eitaa: true }'`). Tests run only
 // against the owner's own approved mirror (their test channel), and only
 // with messages the diagnostic itself created. Reports carry timings, HTTP
@@ -10,12 +10,12 @@ import {
   SHARED_TOKEN, RELAY_URL, relayEnabled, eitaaCallOnce, eitaaCall, channelToken, describeFailure, messageIdOf, redact,
   getSetting, updateCaps, eitaaCaps, webCryptoAvailable, simpleModeEnabled, advancedModeEnabled,
 } from './eitaa.js';
-import { channelRow, refetch, buildParts, processQueue } from './eitaa_mirror.js';
+import { channelRow } from './eitaa_mirror.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { now, sleep } from './util.js';
 
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAA7UlEQVR42s3CQSsDAACG4e+XODg4ODg4OFArErUiUSsStSJRKxJvikStSNSKRK1I1IpErUjUiuTg4ODg1/gb79OTNj5V0867ajpoqaaTN9V08aKabp5U00NTNb08qqbAvWoGuFXNEA3VFLlRzShXqhnnQjUl6qqZ4lw1M5yqpsyxauapqWaRI9VUOFDNCnuqWaOqmg12VbPFtmp22FRNlQ3V7LOumkNWVVNjWTUnVFRzxpJq6iyo5pI51VxTVk2DWdXcMa2aByZV06SkmmcmVPPKmGpajKjmg6JqvhhWzTeDqvmhXzW/FFTzR5/qPzcpIkRiPeIRAAAAAElFTkSuQmCC';
-const BUDGET_MS = 23000;
+const BUDGET_MS = 22000;
 
 function b64(s) {
   const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -181,16 +181,6 @@ export async function runEitaaDiag() {
 
   out.push('', `⏱ این اجرا ${Math.round((Date.now() - started) / 100) / 10} ثانیه طول کشید.`);
   await say(out.join('\n'));
-
-  // Safe duration check: keep the run alive up to 27 s (the platform cuts
-  // runs near 30 s), then report. Nothing is left half-done if it is cut.
-  const target = 27000;
-  let beats = 0;
-  while (Date.now() - started < target) {
-    await db.get(sql`SELECT 1 AS x`);
-    beats++;
-  }
-  await say(`⏱ اجرای این دستور دست‌کم ${Math.round((Date.now() - started) / 1000)} ثانیه زنده ماند (${beats} پرس‌وجوی پایگاه داده). سقف پلتفرم حدود ۳۰ ثانیه است.`);
 }
 
 // Does editMessageReplyMarkup tell an existing post from a deleted one?
@@ -218,131 +208,6 @@ async function deletionProbe() {
     }
   }
   return out;
-}
-
-// ── /eitaa_diag fmt ─────────────────────────────────────────────────────────
-
-const FMT_MESSAGES = [
-  '1) <b>b</b> · <strong>strong</strong>',
-  '2) <i>i</i> · <em>em</em>',
-  '3) <u>u</u> · <s>s</s> · <strike>strike</strike> · <del>del</del>',
-  '4) <a href="https://eitaa.com">a (link)</a> · <code>code</code>\n<pre>pre line 1\npre line 2</pre>',
-  '5) <blockquote>blockquote</blockquote>',
-  '6) <tg-spoiler>tg-spoiler</tg-spoiler> · <span class="tg-spoiler">span</span> · esc: &amp; &lt; &gt;',
-];
-
-// A visual check only: the tags the bot uses are fixed (eitaa.js), so
-// nothing is stored from it.
-export async function runFmtDiag() {
-  const m = await testMapping();
-  if (!m) return say(NO_MAPPING);
-  const out = ['🔤 آزمایش تگ‌های HTML — ۶ پیام به کانال آزمایشی فرستاده شد:'];
-  for (const text of FMT_MESSAGES) {
-    out.push(line(text.slice(0, 2), await eitaaCallOnce(m.token, 'sendMessage', { chat_id: m.chat, title: 'tg-diag-fmt', text, parse_mode: 'html' })));
-  }
-  out.push('', 'ربات از این تگ‌ها استفاده می‌کند: b, i, code, a (بقیه به متن ساده تبدیل می‌شوند).');
-  await say(out.join('\n'));
-  return null;
-}
-
-// /eitaa_diag fmt2 (and CI __eitaa_fmt2): do literal * _ / in a text break
-// Eitaa's HTML formatting, and which escape keeps them literal? Each
-// message carries the same formatted baseline plus one variant.
-const BASE = '<b>bold</b> <i>italic</i> <a href="https://eitaa.com">link</a> <code>code</code>';
-const ZWS = '\u200B';
-const FMT2 = [
-  ['html', `1) ${BASE}`],
-  ['html', `2) ${BASE}\n*x*`],
-  ['html', `3) ${BASE}\n_x_`],
-  ['html', `4) ${BASE}\n/x/`],
-  ['html', `5) ${BASE}\n&#42;x&#42; &#95;x&#95; &#47;x&#47;`],
-  ['html', `6) ${BASE}\n*${ZWS}x*${ZWS} _${ZWS}x_${ZWS} /${ZWS}x/${ZWS}`],
-  ['html', `7) ${BASE}\n\\*x\\* \\_x\\_ \\/x\\/`],
-  ['markdown', '8) **bold** __italic__ [link](https://eitaa.com) `code`'],
-  [null, '9) **bold** __italic__ [link](https://eitaa.com) `code` *x* _x_ /x/'],
-];
-
-// fmt3: is formatting misplaced after line breaks? Your test post, as the
-// bot renders it, sent with different line-break forms.
-const POST_LINES = ['*test*', '_test_', '/test/', 'link', 'normal', 'bold', 'italic', 'code'];
-function postHtml(nl, from) {
-  const lines = POST_LINES.slice(from || 0);
-  const wrap = { link: (t) => `<a href="https://eitaa.com">${t}</a>`, bold: (t) => `<b>${t}</b>`, italic: (t) => `<i>${t}</i>`, code: (t) => `<code>${t}</code>` };
-  return lines.map((l) => (wrap[l] ? wrap[l](l) : l)).join(nl);
-}
-const FMT3 = [
-  `1) x\n<b>bold</b>`,
-  `2) x\nx\nx\n<b>bold</b> <i>italic</i> <code>code</code>`,
-  `3) \n` + postHtml('\n'),
-  `4) <br>` + postHtml('<br>'),
-  `5) \r\n` + postHtml('\r\n'),
-  `6) \n` + postHtml('\n', 3),
-  `7) ` + postHtml(' '),
-];
-
-// fmt4: does a text that starts with * _ / switch Eitaa's HTML off? Each is
-// its own message, labels at the end (the start must stay the variant).
-const FMT5 = [
-  '<b>#tag | bold after a hashtag</b> (5-1)',
-  '#tag<b> | bold after a hashtag</b> (5-2)',
-  '<b>#tag</b> | bold hashtag only (5-3)',
-  '<b>bold with #tag inside</b> (5-4)',
-];
-
-export async function runFmt5Diag() {
-  const m = await testMapping();
-  if (!m) return { ok: false, error: 'no test mapping' };
-  const out = [];
-  for (const text of FMT5) {
-    const r = await eitaaCallOnce(m.token, 'sendMessage', { chat_id: m.chat, title: 'tg-diag-fmt5', text, parse_mode: 'html' });
-    out.push(`${text.slice(-5)} ${r.ok ? 'ok' : describeFailure(r).slice(0, 80)}`);
-  }
-  return { ok: true, sent: out };
-}
-
-const FMT4 = [
-  ['tg-diag-fmt4', '*test*\n<b>bold</b> <i>italic</i> (4-1)'],
-  ['tg-diag-fmt4', '\u200B*test*\n<b>bold</b> <i>italic</i> (4-2)'],
-  ['tg-diag-fmt4', '_test_\n<b>bold</b> <i>italic</i> (4-3)'],
-  ['tg-diag-fmt4', '/test/\n<b>bold</b> <i>italic</i> (4-4)'],
-  ['tg-diag-fmt4', 'x *test*\n<b>bold</b> <i>italic</i> (4-5)'],
-  ['tg-57', 'x *test*\n<b>bold</b> <i>italic</i> (4-6)'],
-  ['tg-diag-fmt4', '\u200B' + postHtml('\n') + ' (4-7)'],
-];
-
-export async function runFmt4Diag() {
-  const m = await testMapping();
-  if (!m) return { ok: false, error: 'no test mapping' };
-  const out = [];
-  for (const [title, text] of FMT4) {
-    const r = await eitaaCallOnce(m.token, 'sendMessage', { chat_id: m.chat, title, text, parse_mode: 'html' });
-    out.push(`${text.slice(-5)} ${r.ok ? 'ok' : describeFailure(r).slice(0, 80)}`);
-  }
-  return { ok: true, sent: out };
-}
-
-export async function runFmt3Diag() {
-  const m = await testMapping();
-  if (!m) return { ok: false, error: 'no test mapping' };
-  const out = [];
-  for (const text of FMT3) {
-    const r = await eitaaCallOnce(m.token, 'sendMessage', { chat_id: m.chat, title: 'tg-diag-fmt3', text, parse_mode: 'html' });
-    out.push(`${text.slice(0, 2)} ${r.ok ? 'ok' : describeFailure(r).slice(0, 80)}`);
-  }
-  return { ok: true, sent: out };
-}
-
-export async function runFmt2Diag() {
-  const m = await testMapping();
-  if (!m) return { ok: false, error: 'no test mapping' };
-  const out = [];
-  for (const [mode, text] of FMT2) {
-    const params = { chat_id: m.chat, title: 'tg-diag-fmt2', text };
-    if (mode) params.parse_mode = mode;
-    const r = await eitaaCallOnce(m.token, 'sendMessage', params);
-    out.push(`${text.slice(0, 2)} ${r.ok ? 'ok' : describeFailure(r).slice(0, 80)}`);
-  }
-  return { ok: true, sent: out };
 }
 
 // ── /eitaa_diag methods ─────────────────────────────────────────────────────
@@ -446,50 +311,6 @@ export async function runSizeDiag(arg) {
   return null;
 }
 
-// ── Phase B: the Eitaa web gateway (no login, no credentials) ───────────────
-// One unauthenticated help.getConfig inside eitaaObject (token and imei
-// empty), only to see whether the gateway answers the platform at all.
-
-function tlInt(v) {
-  const b = new Uint8Array(4);
-  new DataView(b.buffer).setInt32(0, v, true);
-  return [...b];
-}
-
-function tlBytes(bytes) {
-  const out = bytes.length < 254 ? [bytes.length, ...bytes] : [254, bytes.length & 255, (bytes.length >> 8) & 255, (bytes.length >> 16) & 255, ...bytes];
-  while (out.length % 4) out.push(0);
-  return out;
-}
-
-export async function gatewayProbe() {
-  const inner = tlInt(0xc4f9186b | 0); // help.getConfig
-  const body = new Uint8Array([
-    ...tlInt(0x7abe77ed | 0), // eitaaObject
-    ...tlBytes([]), ...tlBytes([]), ...tlBytes(inner), ...tlInt(133), ...tlInt(0),
-  ]);
-  const out = {};
-  for (const url of ['https://sajad.eitaa.ir/eitaa/', 'https://alzheimer.eitaa.com/eitaa/']) {
-    const t = Date.now();
-    try {
-      const res = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/octet-stream' } });
-      const chunks = [];
-      let n = 0;
-      for await (const c of res.body) {
-        chunks.push(c);
-        n += c.length || c.byteLength || 0;
-        if (n > 65536) break;
-      }
-      const first = chunks.length ? new Uint8Array(chunks[0]) : new Uint8Array(0);
-      const head = first.length >= 4 ? (new DataView(first.buffer, first.byteOffset, 4).getUint32(0, true) >>> 0).toString(16) : '';
-      out[url] = { http: res.status, ms: Date.now() - t, bytes: n, firstConstructor: head ? '0x' + head : null };
-    } catch (e) {
-      out[url] = { error: redact(e && e.message).slice(0, 100), ms: Date.now() - t };
-    }
-  }
-  return out;
-}
-
 // The relay's own check: can Cloudflare reach eitaayar.ir right now?
 async function relayPing() {
   const t = Date.now();
@@ -500,84 +321,6 @@ async function relayPing() {
   } catch (e) {
     return { ok: false, ms: Date.now() - t, error: redact(e && e.message).slice(0, 100) };
   }
-}
-
-// CI probe (__eitaa_render): the owner's last mirrored post, re-read from
-// Telegram, and what the bot builds from it — as structure only: entity
-// types/offsets and the parts with every letter and digit masked.
-export async function runEitaaRender() {
-  const rows = await db.all(sql`
-    SELECT p.tg_channel_id AS ch, p.tg_message_id AS id FROM eitaa_posts p
-    JOIN eitaa_channels c ON c.tg_channel_id = p.tg_channel_id
-    WHERE c.owner_tg_id = ${OWNER_TELEGRAM_ID} AND p.status IN ('done', 'partial')
-    ORDER BY p.tg_message_id DESC LIMIT 5`);
-  const mask = (t) => String(t || '').replace(/[\p{L}\p{N}]/gu, 'x');
-  const out = [];
-  for (const row of rows) {
-    const ch = channelRow(await db.get(sql`SELECT * FROM eitaa_channels WHERE tg_channel_id = ${row.ch}`));
-    const f = await refetch(ch, Number(row.id));
-    if (!f.ok) {
-      out.push({ id: row.id, refetch: f });
-      continue;
-    }
-    const m = f.message;
-    const { parts, issues } = buildParts(m, await eitaaCaps(), { link: 'L' });
-    out.push({
-      id: row.id, media: Boolean(m.photo || m.video || m.document), textShape: mask(m.text || m.caption),
-      entities: (m.entities || m.caption_entities || []).map((e) => `${e.type}@${e.offset}+${e.length}`),
-      parts: parts.map((p) => ({ type: p.type, html: p.html || (p.caption && p.caption.html), shape: mask(p.text || (p.caption && p.caption.text)) })),
-      issues: [...issues],
-    });
-  }
-  return out;
-}
-
-// CI probe (__eitaa_resend): sends the owner's last mirrored post again
-// through the real mirror path (queue → re-read → send), to compare it with
-// the diagnostic messages in the same app.
-export async function runEitaaResend(onlyId) {
-  const id = Number.isSafeInteger(onlyId) ? onlyId : null;
-  const row = await db.get(sql`
-    SELECT p.tg_channel_id AS ch, p.tg_message_id AS id FROM eitaa_posts p
-    JOIN eitaa_channels c ON c.tg_channel_id = p.tg_channel_id
-    WHERE c.owner_tg_id = ${OWNER_TELEGRAM_ID} AND p.kind = 'post' AND p.status IN ('done', 'partial')
-      AND (${id} IS NULL OR p.tg_message_id = ${id})
-    ORDER BY p.tg_message_id DESC LIMIT 1`);
-  if (!row) return { ok: false, error: 'no post' };
-  await db.run(sql`
-    UPDATE eitaa_posts SET status = 'queued', parts_done = 0, eitaa_ids = '[]', attempts = 0
-    WHERE tg_channel_id = ${row.ch} AND tg_message_id = ${row.id}`);
-  const status = await processQueue(Number(row.ch), { deadline: Date.now() + 10000, waitMs: 3000 });
-  const after = await db.get(sql`SELECT status, issues, last_error FROM eitaa_posts WHERE tg_channel_id = ${row.ch} AND tg_message_id = ${row.id}`);
-  return { ok: true, id: row.id, queue: status, after };
-}
-
-// CI probe (__health): the Telegram webhook's state (url left out) and
-// which invisible menu texts Telegram accepts (sent to the owner, deleted
-// right away).
-export async function runHealth() {
-  const out = {};
-  try {
-    const w = await api.getWebhookInfo();
-    out.webhook = {
-      set: Boolean(w.url), pending: w.pending_update_count, lastError: w.last_error_message || null,
-      lastErrorAgo: w.last_error_date ? Math.round(Date.now() / 1000 - w.last_error_date) : null,
-      allowed: w.allowed_updates,
-    };
-  } catch (e) {
-    out.webhook = { error: e && e.description };
-  }
-  out.invisible = {};
-  for (const [name, text] of [['U+2800', '\u2800'], ['U+3164', '\u3164'], ['U+200B', '\u200B'], ['U+2063', '\u2063'], ['nbsp', '\u00A0']]) {
-    try {
-      const m = await api.sendMessage({ chat_id: OWNER_TELEGRAM_ID, text, parse_mode: 'HTML', disable_notification: true });
-      out.invisible[name] = 'ok';
-      await api.deleteMessage({ chat_id: OWNER_TELEGRAM_ID, message_id: m.message_id }).catch(() => null);
-    } catch (e) {
-      out.invisible[name] = `${e && e.code} ${e && e.description}`;
-    }
-  }
-  return out;
 }
 
 // CI probe (__eitaa_state): stored findings and the outcome of the owner's
@@ -594,7 +337,8 @@ export async function runEitaaState() {
 // logs, so it carries no ids, tokens or contents.
 export async function runEitaaCiProbe() {
   const out = { at: now(), runtime: runtimeCaps(), simpleMode: simpleModeEnabled(), advancedMode: advancedModeEnabled() };
-  out.site = await timedFetch('https://eitaayar.ir/');
+  // Direct access from Telegram Serverless (blocked since 2026-11; the relay is used).
+  out.direct = await timedFetch('https://eitaayar.ir/');
   out.relay = relayEnabled() ? await relayPing() : 'not configured';
   if (relayEnabled()) {
     // Security check: the relay must refuse a request without a signature.
@@ -605,35 +349,12 @@ export async function runEitaaCiProbe() {
       out.relayUnsigned = 'error: ' + redact(e && e.message).slice(0, 80);
     }
   }
-  // What else can (not) be reached, to tell a block on Eitaa from a
-  // general problem with Iranian hosts.
-  out.reach = {};
-  for (const url of [
-    'https://example.com/', 'https://tapi.bale.ai/', 'https://ble.ir/', 'https://eitaa.com/', 'https://web.eitaa.com/',
-    'https://www.aparat.com/', 'https://www.digikala.com/', 'https://2.189.58.58/', 'http://eitaayar.ir/', 'https://api.eitaayar.ir/',
-  ]) {
-    const r = await timedFetch(url);
-    out.reach[url] = r.ok ? `${r.status} ${r.ms}ms` : `fail ${r.ms}ms ${r.error}`;
-  }
   if (SHARED_TOKEN) {
     const r = await eitaaCall(SHARED_TOKEN, 'getMe', {});
     out.getMe = { ok: r.ok, ms: r.ms, http: r.http, error: r.ok ? undefined : describeFailure(r).slice(0, 100) };
   }
   const bad = await eitaaCallOnce('bot0:00000000-0000-0000-0000-000000000000', 'getMe', {});
   out.badTokenShape = { http: bad.http, keys: Object.keys(bad).filter((k) => k !== 'ms').sort(), error_code: bad.error_code, description: String(bad.description || '').slice(0, 80) };
-  // What the plain-HTTP answer says (a firewall page?). Bad token only.
-  out.httpBodies = {};
-  for (const url of ['http://eitaayar.ir/', 'http://eitaayar.ir/api/bot0:00000000-0000-0000-0000-000000000000/getMe']) {
-    try {
-      const res = await fetch(url);
-      const headers = {};
-      for (const k of ['server', 'content-type', 'via', 'x-cache', 'cf-ray', 'retry-after']) if (res.headers.has(k)) headers[k] = res.headers.get(k);
-      out.httpBodies[url.replace(/bot0:[0-9-]+/, 'bot0:…')] = { status: res.status, headers, body: redact((await res.text()).replace(/\s+/g, ' ')).slice(0, 300) };
-    } catch (e) {
-      out.httpBodies[url] = { error: redact(e && e.message).slice(0, 100) };
-    }
-  }
-  out.gateway = await gatewayProbe();
   out.caps = await eitaaCaps();
   return out;
 }

@@ -11,7 +11,7 @@ import { safeErrorText } from '../lib/bale.js';
 import { T } from '../lib/texts.js';
 import * as EL from '../lib/eitaa_link.js';
 import { onMethodButton } from '../lib/eitaa_diag.js';
-import { runStartFlow } from '../lib/start.js';
+import * as BU from '../lib/bale_ui.js';
 import { onBaleFmtButton } from '../lib/bale_fmt.js';
 
 async function answer(cq, text, showAlert) {
@@ -89,9 +89,13 @@ async function menuButton(cq) {
   if (ns === 'm') {
     if (action === 'home') await EL.showMenu(where, tgId);
     else if (action === 'help') await EL.showHelp(where);
-    else if (action === 'bale') await runStartFlow(cq.message ? cq.message.chat.id : tgId, tgId);
-    else if (action === 'bch') await EL.showBaleChannels(where, tgId);
-    else if (action === 'bnew') await EL.startBaleChannel(where, tgId);
+    else if (action === 'bale') await BU.showAccount(where, tgId);
+    else if (action === 'btest') await BU.sendTest(where, tgId);
+    else if (action === 'bunl') await BU.askUnlinkAccount(where);
+    else if (action === 'bunly') await BU.unlinkAccount(where, tgId);
+    else if (action === 'bch') await BU.showBaleChannels(where, tgId);
+    else if (action === 'bnew') await BU.startBaleChannel(where, tgId);
+    else if (action === 'bpick') await BU.pickBaleChannel(where, tgId, Number(arg));
     return true;
   }
   if (ns !== 'e') return false;
@@ -175,7 +179,7 @@ export default async function (cq) {
           // Message too old or already edited.
         }
       }
-      await api.sendMessage({ chat_id: tgId, text: T.verifySuccess }).catch(() => null);
+      await BU.showLinked(tgId);
       return;
     }
 

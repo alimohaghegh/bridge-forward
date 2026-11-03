@@ -1,17 +1,15 @@
 name: Bale diagnostics
 
-# Probes Bale (__diag, __probe, __mirrortest) or EitaaYar (__eitaa: reachability,
-# getMe, error shapes, Eitaa web gateway) from Telegram Serverless. Deploys
+# Probes Bale (__diag, __mirrortest) or EitaaYar (__eitaa: relay, getMe, error
+# shapes; __eitaa_state: stored findings and last post outcomes) from Telegram
+# Serverless. Deploys
 # nothing; prints timings, codes and counts only (CI logs are public).
 on:
   workflow_dispatch:
     inputs:
       probe:
-        description: 'Payload flag to run (__diag, __probe, __mirrortest, __eitaa or __eitaa_state)'
+        description: 'Payload flag to run (__diag, __mirrortest, __eitaa or __eitaa_state)'
         default: '__diag'
-      arg:
-        description: 'Optional number for the probe (e.g. the post to re-send with __eitaa_resend)'
-        default: ''
 
 permissions:
   contents: read
@@ -65,18 +63,14 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           PROBE: ${{ inputs.probe }}
-          ARG: ${{ inputs.arg }}
         run: |
-          case "$ARG" in '') VALUE=true;; *[!0-9]*) echo "arg must be a number"; exit 1;; *) VALUE=$ARG;; esac
-          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4|__eitaa_fmt5|__health) ;; *) echo "unknown probe"; exit 1;; esac
-          bash scripts/run-and-annotate.sh "$PROBE" "{ $PROBE: $VALUE }" || true
+          case "$PROBE" in __diag|__mirrortest|__eitaa|__eitaa_state) ;; *) echo "unknown probe"; exit 1;; esac
+          bash scripts/run-and-annotate.sh "$PROBE" "{ $PROBE: true }" || true
 
       - name: Probe (run 2)
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           PROBE: ${{ inputs.probe }}
         run: |
-          # Probes that post messages run once.
-          case "$PROBE" in __eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4|__eitaa_fmt5|__health) exit 0;; esac
-          case "$PROBE" in __diag|__probe|__mirrortest|__eitaa|__eitaa_state|__eitaa_fmt2|__eitaa_fmt3|__eitaa_render|__eitaa_resend|__eitaa_fmt4|__eitaa_fmt5|__health) ;; *) echo "unknown probe"; exit 1;; esac
+          case "$PROBE" in __diag|__mirrortest|__eitaa|__eitaa_state) ;; *) echo "unknown probe"; exit 1;; esac
           bash scripts/run-and-annotate.sh "$PROBE" "{ $PROBE: true }" || true

@@ -1,4 +1,5 @@
-// The main menu, and linking/managing Telegram channel → Eitaa mirrors.
+// The main menu, help, and linking/managing Telegram channel → Eitaa
+// mirrors (the Bale screens are in bale_ui.js).
 //
 // Linking: the user makes the bot admin of their Telegram channel (the
 // my_chat_member update, or a forwarded post, tells us which), proves they
@@ -14,7 +15,9 @@
 import { api, db } from 'sdk';
 import { eq, sql } from 'sdk/db';
 import { users } from '../schema.js';
-import { checkTelegramChannel, telegramChannelRef, listChannels, telegramChannelTitle, setPending } from './channels.js';
+import { checkTelegramChannel, telegramChannelRef, getChannel } from './channels.js';
+import { pickBaleChannel } from './bale_ui.js';
+import { show, HOME_ROW } from './ui.js';
 import {
   SHARED_TOKEN, OPERATOR_USERNAME, simpleModeEnabled, advancedModeEnabled, webCryptoAvailable,
   eitaaCall, classifyEitaa, describeFailure, encryptToken, eitaaReachable,
@@ -22,38 +25,22 @@ import {
 import {
   getEitaaChannel, channelInfo, processQueue, retryChannel, sweepDeletions, queuedCount, recentPosts,
 } from './eitaa_mirror.js';
-import { isOwner, getUser } from './store.js';
+import { isOwner } from './store.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
-import { E, MENU, T } from './texts.js';
+import { E, B, MENU } from './texts.js';
 import { now, rowsOf, toAsciiDigits } from './util.js';
 
 const STEP_SECONDS = 30 * 60;
 const TOKEN_PATTERN = /\bbot\d+:[A-Za-z0-9-]{8,}\b/i;
-
-// ── Sending / editing screens ───────────────────────────────────────────────
-
-// Shows a screen: edits the button's message when `cq` is given, else sends.
-export async function show(where, text, keyboard) {
-  const extra = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
-  if (keyboard) extra.reply_markup = { inline_keyboard: keyboard };
-  if (where.cq && where.cq.message) {
-    try {
-      await api.editMessageText({ chat_id: where.cq.message.chat.id, message_id: where.cq.message.message_id, text, ...extra });
-      return;
-    } catch (e) {
-      if (e && /not modified/i.test(String(e.description))) return;
-    }
-  }
-  const chatId = where.chatId || (where.cq && where.cq.from.id);
-  await api.sendMessage({ chat_id: chatId, text, ...extra }).catch((e) => console.warn('show failed', e && e.code));
-}
 
 async function pendingRequestCount() {
   const r = await db.get(sql`SELECT count(*) AS n FROM eitaa_requests WHERE status = 'pending'`);
   return Number(r && r.n) || 0;
 }
 
-export async function showMenu(where, tgId) {
+// `note` (HTML) replaces the menu's invisible text, e.g. to explain why a
+// message wasn't forwarded.
+export async function showMenu(where, tgId, note) {
   const keyboard = [
     [{ text: MENU.bale, callback_data: 'm:bale' }],
     [{ text: MENU.baleChannels, callback_data: 'm:bch' }],
@@ -64,10 +51,10 @@ export async function showMenu(where, tgId) {
     const n = await pendingRequestCount();
     if (n) keyboard.push([{ text: MENU.requests(n), callback_data: 'e:reqs' }]);
   }
-  await show(where, MENU.text, keyboard);
+  await show(where, note || MENU.text, keyboard);
 }
 
-const homeRow = [{ text: MENU.home, callback_data: 'm:home' }];
+const homeRow = HOME_ROW;
 
 export async function showHelp(where) {
   await show(where, E.help, [homeRow]);
@@ -172,18 +159,24 @@ export async function onMyChatMember(u) {
     await api.sendMessage({ chat_id: tgId, text: E.resumed }).catch(() => null);
     return;
   }
-  if (ch && ch.status !== 'draft') return;
-
-  if (user.pending_step === 'e_admin' && user.pending_until > now()) {
-    await pickChannel({ chatId: tgId }, tgId, tgChannelId).catch(() => null);
+  const where = { chatId: tgId };
+  const waiting = user.pending_until > now() ? user.pending_step : null;
+  // In the middle of linking: continue it with this channel.
+  if (waiting === 'e_admin') {
+    await pickChannel(where, tgId, tgChannelId).catch(() => null);
     return;
   }
-  await api.sendMessage({
-    chat_id: tgId,
-    text: E.botAddedAsk(u.chat.title || String(tgChannelId)),
-    parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: [[{ text: E.btnYesConnect, callback_data: `e:pick:${tgChannelId}` }]] },
-  }).catch(() => null); // the DM may fail: then nothing happens
+  if (waiting === 'tg_channel') {
+    await pickBaleChannel(where, tgId, tgChannelId).catch(() => null);
+    return;
+  }
+  // Otherwise ask where to (the DM may fail: then nothing happens).
+  const toEitaa = !ch || ch.status === 'draft';
+  const toBale = !(await getChannel(tgChannelId));
+  const row = [];
+  if (toBale) row.push({ text: B.btnToBale, callback_data: `m:bpick:${tgChannelId}` });
+  if (toEitaa) row.push({ text: B.btnToEitaa, callback_data: `e:pick:${tgChannelId}` });
+  if (row.length) await show(where, B.botAddedAsk(u.chat.title || String(tgChannelId)), [row]);
 }
 
 // ── Step 2: the mode ────────────────────────────────────────────────────────
@@ -436,30 +429,6 @@ export async function showList(where, tgId) {
   keyboard.push([{ text: MENU.addChannel, callback_data: 'e:new' }]);
   keyboard.push(homeRow);
   await show(where, rows.length ? E.listHeader : E.listEmpty, keyboard);
-}
-
-// The Bale channel list with its unlink buttons (same as /channels) and a
-// button to link another one.
-export async function showBaleChannels(where, tgId) {
-  const list = await listChannels(tgId);
-  const keyboard = [];
-  for (const ch of list) {
-    const title = await telegramChannelTitle(ch.tgChannelId);
-    keyboard.push([{ text: T.chUnlinkButton(title), callback_data: `unch:${ch.tgChannelId}` }]);
-  }
-  keyboard.push([{ text: MENU.addChannel, callback_data: 'm:bnew' }]);
-  keyboard.push(homeRow);
-  return show(where, list.length ? E.baleListHeader : E.baleListEmpty, keyboard);
-}
-
-// «➕ اتصال کانال جدید» for Bale: the /channel flow.
-export async function startBaleChannel(where, tgId) {
-  const user = await getUser(tgId);
-  if (!user || !user.baleChatId) {
-    return show(where, E.baleNeedAccount, [[{ text: MENU.bale, callback_data: 'm:bale' }], homeRow]);
-  }
-  await setPending(tgId, 'tg_channel');
-  return show(where, T.chStep1);
 }
 
 // The channel, if `tgId` may manage it (its owner, or the bot owner).
