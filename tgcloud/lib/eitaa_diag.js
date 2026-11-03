@@ -443,6 +443,15 @@ export async function runEitaaCiProbe() {
   const out = { at: now(), runtime: runtimeCaps(), simpleMode: simpleModeEnabled(), advancedMode: advancedModeEnabled() };
   out.site = await timedFetch('https://eitaayar.ir/');
   out.relay = relayEnabled() ? await relayPing() : 'not configured';
+  if (relayEnabled()) {
+    // Security check: the relay must refuse a request without a signature.
+    try {
+      const res = await fetch(RELAY_URL + '/api/bot0:00000000-0000-0000-0000-000000000000/getMe', { method: 'POST', body: fetch.body.form({}) });
+      out.relayUnsigned = res.status === 403 ? 'rejected (403)' : 'NOT rejected: HTTP ' + res.status;
+    } catch (e) {
+      out.relayUnsigned = 'error: ' + redact(e && e.message).slice(0, 80);
+    }
+  }
   // What else can (not) be reached, to tell a block on Eitaa from a
   // general problem with Iranian hosts.
   out.reach = {};
