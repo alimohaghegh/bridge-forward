@@ -145,6 +145,12 @@ export function messageIdOf(r) {
 
 // ── Stored findings (eitaa_settings) ────────────────────────────────────────
 
+// Telegram Serverless's outbound proxy could not connect to Eitaa's network
+// at all (measured 2026-11-03: every Eitaa host fails, other Iranian sites
+// work). Checked before a user starts linking; cached for a few minutes.
+const REACH_TTL_SECONDS = 5 * 60;
+
+
 export async function getSetting(key, fallback) {
   const row = await db.get(sql`SELECT value FROM eitaa_settings WHERE key = ${key}`);
   if (!row || row.value === null || row.value === undefined) return fallback;
@@ -159,6 +165,16 @@ export async function setSetting(key, value) {
   await db.run(sql`
     INSERT INTO eitaa_settings (key, value, updated_at) VALUES (${key}, ${JSON.stringify(value)}, ${now()})
     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
+}
+
+// True when EitaaYar answers at all (any HTTP answer from it counts).
+export async function eitaaReachable() {
+  const cached = await getSetting('reach', null);
+  if (cached && now() - cached.at < REACH_TTL_SECONDS) return cached.ok;
+  const r = await rawCall(SHARED_TOKEN || 'bot0:00000000-0000-0000-0000-000000000000', 'getMe', {});
+  const ok = r.ok || (!r.network && typeof r.ok === 'boolean' && r.http < 500);
+  await setSetting('reach', { ok, at: now() });
+  return ok;
 }
 
 // HTML tags known to render in Eitaa. Until /eitaa_diag fmt is answered,

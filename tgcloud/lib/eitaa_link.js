@@ -17,7 +17,7 @@ import { users } from '../schema.js';
 import { checkTelegramChannel, telegramChannelRef, listChannels, telegramChannelTitle } from './channels.js';
 import {
   SHARED_TOKEN, OPERATOR_USERNAME, simpleModeEnabled, advancedModeEnabled, webCryptoAvailable,
-  eitaaCall, classifyEitaa, describeFailure, encryptToken,
+  eitaaCall, classifyEitaa, describeFailure, encryptToken, eitaaReachable,
 } from './eitaa.js';
 import {
   getEitaaChannel, channelInfo, processQueue, retryChannel, sweepDeletions, queuedCount, recentPosts,
@@ -93,6 +93,10 @@ export function isEitaaStep(step) {
 // ── Step 1: the Telegram channel ────────────────────────────────────────────
 
 export async function startLink(where, tgId) {
+  if (!(await eitaaReachable())) {
+    await show(where, E.unreachable + (isOwner(tgId) ? '\n\n' + E.unreachableOwner : ''), [homeRow]);
+    return;
+  }
   await setStep(tgId, 'e_admin');
   await show(where, E.start, [E.cancelRow]);
 }
