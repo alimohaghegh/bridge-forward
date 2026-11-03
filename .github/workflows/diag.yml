@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       probe:
-        description: 'Payload flag to run (__diag or __probe)'
+        description: 'Payload flag to run (__diag, __probe or __mirrortest)'
         default: '__diag'
 
 permissions:
@@ -42,12 +42,12 @@ jobs:
         env:
           PROBE: ${{ inputs.probe }}
         run: |
-          case "$PROBE" in __diag|__probe) ;; *) echo "unknown probe"; exit 1;; esac
+          case "$PROBE" in __diag|__probe|__mirrortest) ;; *) echo "unknown probe"; exit 1;; esac
           npx tgcloud run handlers/message "{ $PROBE: true }" || true
 
       - name: Probe (run 2)
         env:
           PROBE: ${{ inputs.probe }}
         run: |
-          case "$PROBE" in __diag|__probe) ;; *) echo "unknown probe"; exit 1;; esac
+          case "$PROBE" in __diag|__probe|__mirrortest) ;; *) echo "unknown probe"; exit 1;; esac
           npx tgcloud run handlers/message "{ $PROBE: true }" || true

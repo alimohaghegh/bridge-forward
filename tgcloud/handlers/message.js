@@ -15,7 +15,7 @@ import {
 } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
-import { runDiag, runBaleProbe, formatProbe, runDeleteProbe } from '../lib/diag.js';
+import { runDiag, runBaleProbe, formatProbe, runDeleteProbe, runMirrorTest } from '../lib/diag.js';
 import {
   touchUser, getUser, clearLink, claimMessage, maybeCleanup, countDelivery, isOwner,
   recordBaleSuccess, recordBaleFailure,
@@ -281,6 +281,7 @@ export default async function (message, ctx) {
   if (!(ctx && ctx.update) && message && message.__setup === true) return runSetup();
   if (!(ctx && ctx.update) && message && message.__diag === true) return runDiag();
   if (!(ctx && ctx.update) && message && message.__probe === true) return runDeleteProbe();
+  if (!(ctx && ctx.update) && message && message.__mirrortest === true) return runMirrorTest();
   // Scheduled run (GitHub Actions): retry queued channel posts, find deletions.
   if (!(ctx && ctx.update) && message && message.__drain === true) return drainAll();
 

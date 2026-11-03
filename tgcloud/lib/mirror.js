@@ -318,7 +318,7 @@ async function probeDeletions(link, deadline) {
     WHERE tg_channel_id = ${link.tgChannelId} AND probed_at < ${t - PROBE_INTERVAL_SECONDS}`);
   if (!claimed.rowsAffected) return 0;
 
-  const rows = rowsOf(await db.run(sql`
+  const rows = rowsOf(await db.all(sql`
     SELECT tg_message_id FROM mirrored
     WHERE tg_chat_id = ${link.tgChannelId} AND created_at > ${t - PROBE_WINDOW_SECONDS}
     ORDER BY checked_at LIMIT ${PROBE_BATCH}`));
@@ -382,7 +382,7 @@ export async function drain(tgChannelId, { deadline, probe } = {}) {
 export async function drainAll(budgetMs) {
   const end = Date.now() + (budgetMs || 18000);
   const out = {};
-  const list = rowsOf(await db.run(sql`SELECT tg_channel_id FROM channels`));
+  const list = rowsOf(await db.all(sql`SELECT tg_channel_id FROM channels`));
   for (const row of list) {
     if (Date.now() > end) break;
     const id = Number(row.tg_channel_id);
