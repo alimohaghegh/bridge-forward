@@ -341,21 +341,22 @@ export async function runProbeMethods() {
   for (const ch of await db.all(sql`SELECT tg_channel_id, owner_tg_id FROM channels WHERE tg_channel_id != -42`)) {
     const chat = ch.tg_channel_id;
     const last = await db.get(sql`SELECT max(message_id) AS id, max(created_at) AS at FROM delivered WHERE chat_id = ${chat}`);
-    if (!last || !last.id) continue;
-    const mid = Number(last.id);
-    const r = { seenAgoS: t - last.at };
-    r.edit1 = await answer(() => api.editMessageReplyMarkup({ chat_id: chat, message_id: mid }));
-    r.react = await answer(() => api.setMessageReaction({ chat_id: chat, message_id: mid, reaction: [] }));
-    r.edit2 = await answer(() => api.editMessageReplyMarkup({ chat_id: chat, message_id: mid }));
-    const g = await answer(() => api.getChat({ chat_id: chat }));
-    r.getChat = g.slice(0, 2);
-    r.edit3 = await answer(() => api.editMessageReplyMarkup({ chat_id: chat, message_id: mid }));
-    const f = await answer(() => api.forwardMessage({ chat_id: ch.owner_tg_id, from_chat_id: chat, message_id: mid, disable_notification: true }));
-    if (f[0] === 'ok' && f[2] && f[2].message_id) await api.deleteMessage({ chat_id: ch.owner_tg_id, message_id: f[2].message_id }).catch(() => null);
-    r.forward = f.slice(0, 2);
-    r.edit4 = await answer(() => api.editMessageReplyMarkup({ chat_id: chat, message_id: mid }));
-    for (const k of ['edit1', 'react', 'edit2', 'edit3', 'edit4']) r[k] = r[k].slice(0, 2);
-    out.push(r);
+    const mirrored = await db.all(sql`
+      SELECT tg_message_id AS id, created_at AS at FROM mirrored WHERE tg_chat_id = ${chat} ORDER BY tg_message_id DESC LIMIT 3`);
+    const targets = [];
+    if (last && last.id) targets.push({ kind: 'newestSeen', id: Number(last.id), at: last.at, truth: true });
+    mirrored.forEach((m, k) => targets.push({ kind: 'mirrored' + k, id: Number(m.id), at: m.at, truth: k === 0 }));
+    for (const tg of targets) {
+      const r = { kind: tg.kind, ageS: t - tg.at };
+      r.edit = (await answer(() => api.editMessageReplyMarkup({ chat_id: chat, message_id: tg.id }))).slice(0, 2);
+      r.react = (await answer(() => api.setMessageReaction({ chat_id: chat, message_id: tg.id, reaction: [] }))).slice(0, 2);
+      if (tg.truth) {
+        const f = await answer(() => api.forwardMessage({ chat_id: ch.owner_tg_id, from_chat_id: chat, message_id: tg.id, disable_notification: true }));
+        if (f[0] === 'ok' && f[2] && f[2].message_id) await api.deleteMessage({ chat_id: ch.owner_tg_id, message_id: f[2].message_id }).catch(() => null);
+        r.forward = f.slice(0, 2);
+      }
+      out.push(r);
+    }
   }
   return out;
 }
