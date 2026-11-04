@@ -2,13 +2,12 @@
 // channel, each item in its own run and in shuffled order, like Telegram's
 // updates. Mirrored into the owner's own Bale chat; the report shows that
 // each album arrived whole. Bale's answers carry no photo, so the order can
-// only be seen: each photo shows its number, and the last album stays in the
+// only be seen: each photo shows its number, and the albums stay in the
 // owner's Bale chat to look at.
 // Outputs hold counts and numbers only.
 
 import { api, db, InputFile } from 'sdk';
 import { sql } from 'sdk/db';
-import { baleCall } from './bale.js';
 import { saveChannel } from './channels.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { getSetting, setSetting } from './eitaa.js';
@@ -154,57 +153,6 @@ export async function runAlbumReport() {
 }
 
 export async function runAlbumCleanup() {
-  const owner = await getUser(OWNER_TELEGRAM_ID);
-  let deleted = 0;
-  const st = await getSetting('album_test', null);
-  const rows = rowsOf(await db.all(sql`
-    SELECT bale_ids FROM mirrored WHERE tg_chat_id = ${CHANNEL} AND tg_message_id <= ${messageId(st, ALBUMS, 0)}`));
-  for (const r of rows) {
-    for (const id of JSON.parse(r.bale_ids)) {
-      const d = await baleCall('deleteMessage', { chat_id: owner.baleChatId, message_id: id });
-      if (d.ok) deleted++;
-    }
-  }
   await clearState();
-  return { ok: true, deleted };
-}
-
-// A labelled album to look at, sent from files already on Bale: each photo
-// is uploaded alone first (and removed), then the album only names them, so
-// Bale has no upload to do while creating it. It stays in the owner's chat.
-export async function runAlbumVariants({ only }) {
-  const owner = await getUser(OWNER_TELEGRAM_ID);
-  const st = await getSetting('album_test', null);
-  if (!owner || !st) return { ok: false, error: 'not prepared' };
-  const chat = owner.baleChatId;
-  const media = [];
-  for (let i = 0; i < ITEMS; i++) {
-    const bytes = await api.getFileContent(st.photos[i].file_id);
-    const u = await baleCall('sendPhoto', { chat_id: chat }, { photo: new InputFile(bytes, 'photo.jpg', { type: 'image/jpeg' }) });
-    if (!u.ok) return { ok: false, step: 'upload', code: u.error_code };
-    const sizes = u.result.photo;
-    if (!sizes || !sizes.length) {
-      await baleCall('deleteMessage', { chat_id: chat, message_id: u.result.message_id });
-      return { ok: false, noFileId: true, keys: Object.keys(u.result).join('+') };
-    }
-    media.push({ type: 'photo', media: sizes[sizes.length - 1].file_id });
-    await baleCall('deleteMessage', { chat_id: chat, message_id: u.result.message_id });
-  }
-  await baleCall('sendMessage', { chat_id: chat, text: `آزمایش ${only + 15}` });
-  const t0 = Date.now();
-  const r = await baleCall('sendMediaGroup', { chat_id: chat, media });
-  return { ok: r.ok, code: r.error_code, desc: r.ok ? undefined : String(r.description).slice(0, 80), ms: Date.now() - t0 };
-}
-
-// Can the Bale bot upload a photo to its own chat? (A place nobody sees.)
-export async function runBaleSelfChat() {
-  const me = await baleCall('getMe', {});
-  if (!me.ok) return { ok: false, step: 'getMe', code: me.error_code };
-  const r = await baleCall('sendPhoto', { chat_id: me.result.id }, {
-    photo: new InputFile(testPng(1), '1.png', { type: 'image/png' }),
-  });
-  if (!r.ok) return { ok: false, step: 'send', code: r.error_code, desc: String(r.description).slice(0, 80) };
-  const hasFileId = Boolean(r.result.photo && r.result.photo.length && r.result.photo[0].file_id);
-  const d = await baleCall('deleteMessage', { chat_id: me.result.id, message_id: r.result.message_id });
-  return { ok: true, hasFileId, deleted: d.ok };
+  return { ok: true };
 }

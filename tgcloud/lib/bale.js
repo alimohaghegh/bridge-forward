@@ -122,6 +122,12 @@ export async function baleCallOnce(method, params, files) {
   return rawCall(method, params, files, relayEnabled() && onceCount++ % 2 === 0);
 }
 
+// One attempt on the usual route (the relay when configured), for steps that
+// have a fallback of their own.
+export async function baleCallFirstRoute(method, params, files) {
+  return rawCall(method, params, files, relayEnabled());
+}
+
 // Sorts a failed call into a reason the bot can explain.
 export function classifyError(r) {
   if (r.ok) return null;

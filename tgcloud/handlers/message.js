@@ -22,10 +22,10 @@ import { clearPending, activePending, telegramChannelTitle } from '../lib/channe
 import { hasPendingCode, pollBale, notifyLinked } from '../lib/linking.js';
 import { ADMIN_COMMANDS, runAdminCommand } from '../lib/admin.js';
 import { runSetup } from '../lib/setup.js';
-import { runAlbumPrepare, albumTestPost, runAlbumReport, runAlbumCleanup, runAlbumVariants, runBaleSelfChat } from '../lib/album_test.js';
+import { runAlbumPrepare, albumTestPost, runAlbumReport, runAlbumCleanup } from '../lib/album_test.js';
 import channelPost from './channel_post.js';
 import {
-  runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState, formatDeleteLog, formatCallLog, runBurstPrepare, runBurstReport, runProbeMethods,
+  runDiag, runBaleProbe, formatProbe, runMirrorTest, runBaleState, formatDeleteLog, formatCallLog, runBurstPrepare, runBurstReport,
 } from '../lib/diag.js';
 import {
   touchUser, getUser, claimMessage, maybeCleanup, countDelivery, isOwner, recordBaleSuccess, recordBaleFailure,
@@ -184,13 +184,10 @@ const CI_RUNS = {
   __bale_state: runBaleState,
   __burst_prepare: runBurstPrepare,
   __burst_report: runBurstReport,
-  __probe_methods: runProbeMethods,
   __album_prepare: runAlbumPrepare,
   __album_item: async (m) => { await channelPost(await albumTestPost(m)); return { ok: true }; },
   __album_report: runAlbumReport,
   __album_cleanup: runAlbumCleanup,
-  __album_variants: runAlbumVariants,
-  __bale_self: runBaleSelfChat,
   __eitaa: runEitaaCiProbe,
   __eitaa_state: runEitaaState,
   // Retry queued channel posts and find deletions (Bale and Eitaa side by side).

@@ -181,7 +181,11 @@ The platform manages the bot's webhook for you, derived from your deployed
   database clock (`DB_NOW`, `DB_NOW_MS` in util.js): the machines' clocks
   differ by up to ~100 s. Raw SELECTs must use `db.all`/`db.get`, not `db.run`.
 - Albums: one update per item; `lib/album.js` collects them in the DB and the
-  first item's run sends them with `sendMediaGroup`.
+  first item's run sends them with `sendMediaGroup`. Each file is first
+  uploaded to the Bale bot's own chat (nobody sees it) and the album names
+  the file_ids: uploaded in the same call, Bale showed albums rotated about
+  half the time. Only eyes can check the order (`album.yml`): Bale's answers
+  carry no photo.
 - Privacy: never store or log message contents; only ids, state, counters
   (album items are the one exception: held seconds, then deleted).
 - All user-facing texts are Persian and live in `lib/texts.js`.

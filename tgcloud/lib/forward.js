@@ -5,7 +5,7 @@
 // Forwarded messages go out like the sender's own: no "forwarded from" line.
 
 import { api, InputFile, BotApiError } from 'sdk';
-import { baleCall, classifyError } from './bale.js';
+import { baleCall, baleCallFirstRoute, classifyError } from './bale.js';
 import { formatChunks } from './format.js';
 import { MAX_FILE_BYTES } from './util.js';
 
@@ -173,6 +173,28 @@ function upload(spec, bytes) {
   return new InputFile(bytes, spec.name, { type: spec.mime });
 }
 
+let baleBotId = null;
+
+async function ownChat() {
+  if (!baleBotId) {
+    const me = await baleCallFirstRoute('getMe', {});
+    if (me.ok && me.result) baleBotId = me.result.id;
+  }
+  return baleBotId;
+}
+
+// Uploads a file to the Bale bot's own chat, which nobody sees. Returns
+// { fileId, messageId } or null.
+async function stage(spec, bytes) {
+  const chatId = await ownChat();
+  if (!chatId) return null;
+  const r = await baleCallFirstRoute(spec.method, { chat_id: chatId }, { [spec.field]: upload(spec, bytes) });
+  if (!r.ok || !r.result) return null;
+  const f = r.result[spec.field];
+  const file = Array.isArray(f) ? f[f.length - 1] : f;
+  return { chatId, messageId: r.result.message_id, fileId: file && file.file_id };
+}
+
 // Runs one op. Returns { ok: true, sent: [[tg, baleId], …] }, a failed Bale
 // envelope / { ok: false, reason }, or { expand: [ops] } to replace the op.
 async function runOp(chatId, op) {
@@ -199,18 +221,28 @@ async function runOp(chatId, op) {
   }
 
   if (op.op === 'group') {
+    // An album uploaded in the same call came out rotated about half the time
+    // (e.g. 5 6 1 2 3 4 instead of 1 to 6; measured by eye, 8 of 16). From
+    // files already on Bale, it was in order 6 of 6. So each file goes to the
+    // bot's own chat first; a file that can't is uploaded with the album.
     const media = [];
     const uploads = {};
+    const staged = [];
+    let staging = true;
     for (let i = 0; i < op.items.length; i++) {
       const it = op.items[i];
       const d = await download(it.spec);
       if (!d.ok) return d;
-      const entry = { type: it.spec.kind, media: `attach://file${i}` };
+      const s = staging ? await stage(it.spec, d.bytes) : null;
+      if (s) staged.push(s);
+      else staging = false; // Bale is having trouble: don't spend the run on it.
+      const entry = { type: it.spec.kind, media: s && s.fileId ? s.fileId : `attach://file${i}` };
       if (it.caption) entry.caption = it.caption;
       media.push(entry);
-      uploads[`file${i}`] = upload(it.spec, d.bytes);
+      if (!s || !s.fileId) uploads[`file${i}`] = upload(it.spec, d.bytes);
     }
-    const r = await baleCall('sendMediaGroup', { chat_id: chatId, media }, uploads);
+    const r = await baleCall('sendMediaGroup', { chat_id: chatId, media }, Object.keys(uploads).length ? uploads : undefined);
+    for (const s of staged) await baleCallFirstRoute('deleteMessage', { chat_id: s.chatId, message_id: s.messageId });
     if (r.ok) {
       const sent = Array.isArray(r.result) ? r.result : [];
       return { ok: true, sent: op.items.map((it, i) => [it.tg, sent[i] && sent[i].message_id]) };
