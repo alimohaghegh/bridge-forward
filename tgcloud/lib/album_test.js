@@ -12,6 +12,7 @@ import { baleCall } from './bale.js';
 import { saveChannel } from './channels.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { getSetting, setSetting } from './eitaa.js';
+import { albumItemOf, planAlbum, runPlan } from './forward.js';
 import { getUser } from './store.js';
 import { DB_NOW_MS, rowsOf } from './util.js';
 
@@ -165,4 +166,30 @@ export async function runAlbumCleanup() {
   }
   await clearState();
   return { ok: true, deleted };
+}
+
+// Labelled albums that differ in one thing each, sent through the normal
+// send code into the owner's Bale chat, to compare by eye. They stay there.
+export async function runAlbumVariants() {
+  const owner = await getUser(OWNER_TELEGRAM_ID);
+  const st = await getSetting('album_test', null);
+  if (!owner || !st) return { ok: false, error: 'not prepared' };
+  const variants = [
+    ['آزمایش ۱: ۶ عکس بدون کپشن', 6, () => undefined],
+    ['آزمایش ۲: دوباره ۶ عکس بدون کپشن', 6, () => undefined],
+    ['آزمایش ۳: ۶ عکس، کپشن روی همه', 6, (i) => String(i)],
+    ['آزمایش ۴: ۶ عکس، کپشن فقط روی اولی', 6, (i) => (i === 1 ? 'کپشن' : undefined)],
+    ['آزمایش ۵: ۴ عکس بدون کپشن', 4, () => undefined],
+  ];
+  const out = [];
+  for (const [label, count, caption] of variants) {
+    await baleCall('sendMessage', { chat_id: owner.baleChatId, text: label });
+    const items = [];
+    for (let i = 1; i <= count; i++) {
+      items.push(albumItemOf({ message_id: i, photo: [st.photos[i - 1]], caption: caption(i) }));
+    }
+    const r = await runPlan(owner.baleChatId, planAlbum(items));
+    out.push(r.ok ? 'ok' : r.reason);
+  }
+  return { ok: true, sent: out.join(',') };
 }

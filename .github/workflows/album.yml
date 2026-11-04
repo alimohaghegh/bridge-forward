@@ -7,6 +7,10 @@ name: Album test
 # album, left for the owner to look at. Deploys nothing.
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'full, or variants (labelled albums to compare by eye)'
+        default: 'full'
 
 permissions:
   contents: read
@@ -53,7 +57,12 @@ jobs:
       - name: Albums
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+          MODE: ${{ inputs.mode }}
         run: |
+          if [ "$MODE" = variants ]; then
+            bash scripts/run-and-annotate.sh 'Variants' '{ __album_variants: true }'
+            exit 0
+          fi
           bash scripts/run-and-annotate.sh 'Prepare' '{ __album_prepare: true }'
           for a in 1 2 3; do
             for i in $(shuf -i 1-6); do
