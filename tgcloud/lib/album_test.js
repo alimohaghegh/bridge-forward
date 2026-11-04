@@ -195,3 +195,16 @@ export async function runAlbumVariants({ only }) {
   const r = await baleCall('sendMediaGroup', { chat_id: chat, media });
   return { ok: r.ok, code: r.error_code, desc: r.ok ? undefined : String(r.description).slice(0, 80), ms: Date.now() - t0 };
 }
+
+// Can the Bale bot upload a photo to its own chat? (A place nobody sees.)
+export async function runBaleSelfChat() {
+  const me = await baleCall('getMe', {});
+  if (!me.ok) return { ok: false, step: 'getMe', code: me.error_code };
+  const r = await baleCall('sendPhoto', { chat_id: me.result.id }, {
+    photo: new InputFile(testPng(1), '1.png', { type: 'image/png' }),
+  });
+  if (!r.ok) return { ok: false, step: 'send', code: r.error_code, desc: String(r.description).slice(0, 80) };
+  const hasFileId = Boolean(r.result.photo && r.result.photo.length && r.result.photo[0].file_id);
+  const d = await baleCall('deleteMessage', { chat_id: me.result.id, message_id: r.result.message_id });
+  return { ok: true, hasFileId, deleted: d.ok };
+}
