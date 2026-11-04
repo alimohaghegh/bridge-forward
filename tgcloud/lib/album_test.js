@@ -12,7 +12,6 @@ import { baleCall } from './bale.js';
 import { saveChannel } from './channels.js';
 import { OWNER_TELEGRAM_ID } from './config.js';
 import { getSetting, setSetting } from './eitaa.js';
-import { albumItemOf, planAlbum, runPlan } from './forward.js';
 import { getUser } from './store.js';
 import { DB_NOW_MS, rowsOf } from './util.js';
 
@@ -48,7 +47,7 @@ const SIDE = 120;
 const SCALE = 14;
 
 // A PNG showing the number n, uncompressed (a single stored deflate block).
-export function testPng(n) {
+export function testPng(n, bg = [255, 220, 120]) {
   const left = (SIDE - 5 * SCALE) / 2;
   const top = (SIDE - 7 * SCALE) / 2;
   const raw = [];
@@ -57,7 +56,7 @@ export function testPng(n) {
     const line = DIGITS[n][Math.floor((y - top) / SCALE)];
     for (let x = 0; x < SIDE; x++) {
       const on = line && line[Math.floor((x - left) / SCALE)] === '1';
-      raw.push(...(on ? [0, 0, 0] : [255, 220, 120]));
+      raw.push(...(on ? [0, 0, 0] : bg));
     }
   }
   let a = 1;
@@ -92,11 +91,13 @@ export async function runAlbumPrepare() {
   await clearState();
   await saveChannel(CHANNEL, owner.baleChatId, OWNER_TELEGRAM_ID);
   // file_ids come from sending each photo to the owner, removed at once.
+  // A new background each time: Bale has never seen these files.
+  const bg = [150 + Math.floor(Math.random() * 100), 150 + Math.floor(Math.random() * 100), 150 + Math.floor(Math.random() * 100)];
   const photos = [];
   for (let i = 1; i <= ITEMS; i++) {
     const m = await api.sendPhoto({
       chat_id: OWNER_TELEGRAM_ID, disable_notification: true,
-      photo: new InputFile(testPng(i), `${i}.png`, { type: 'image/png' }),
+      photo: new InputFile(testPng(i, bg), `${i}.png`, { type: 'image/png' }),
     });
     photos.push(m.photo[m.photo.length - 1]);
     await api.deleteMessage({ chat_id: OWNER_TELEGRAM_ID, message_id: m.message_id }).catch(() => null);
@@ -168,28 +169,24 @@ export async function runAlbumCleanup() {
   return { ok: true, deleted };
 }
 
-// Labelled albums to compare by eye. After each one the message with the
-// smallest Bale id is forwarded on its own: if it shows the album's first
-// photo in the grid, Bale stored the album in that rotated order; if it shows
-// 1, Bale stored it in order and its app rotates the grid. They stay there.
-// Outputs: id differences and residues only, never ids.
+// A labelled album to look at, sent as runOp sends one. Reports how far apart
+// Bale dated its messages: an album seems to be shown rotated when its
+// creation crosses a second. It stays in the owner's chat.
 export async function runAlbumVariants({ only }) {
   const owner = await getUser(OWNER_TELEGRAM_ID);
   const st = await getSetting('album_test', null);
   if (!owner || !st) return { ok: false, error: 'not prepared' };
   const chat = owner.baleChatId;
-  await baleCall('sendMessage', { chat_id: chat, text: `آزمایش ${only + 5}` });
-  const items = [];
-  for (let i = 1; i <= ITEMS; i++) items.push(albumItemOf({ message_id: i, photo: [st.photos[i - 1]] }));
-  const plan = planAlbum(items);
-  const r = await runPlan(chat, plan);
-  if (!r.ok) return { ok: false, reason: r.reason };
-  const ids = items.map((it) => Number(plan.ids[it.tg][0]));
-  const smallest = Math.min(...ids);
-  await baleCall('sendMessage', { chat_id: chat, text: `آزمایش ${only + 5}: عکس با کوچک‌ترین شماره پیام:` });
-  const f = await baleCall('forwardMessage', { chat_id: chat, from_chat_id: chat, message_id: smallest });
-  return {
-    ok: true, forwarded: f.ok, steps: ids.slice(1).map((id, i) => id - ids[i]).join(','),
-    mod: { m6: ids[0] % 6, m8: ids[0] % 8, m10: ids[0] % 10, m16: ids[0] % 16, m100: ids[0] % 100 },
-  };
+  await baleCall('sendMessage', { chat_id: chat, text: `آزمایش ${only + 9}` });
+  const media = [];
+  const uploads = {};
+  for (let i = 0; i < ITEMS; i++) {
+    media.push({ type: 'photo', media: `attach://file${i}` });
+    uploads[`file${i}`] = new InputFile(await api.getFileContent(st.photos[i].file_id), 'photo.jpg', { type: 'image/jpeg' });
+  }
+  const t0 = Date.now();
+  const r = await baleCall('sendMediaGroup', { chat_id: chat, media }, uploads);
+  if (!r.ok) return { ok: false, code: r.error_code };
+  const dates = r.result.map((m) => Number(m.date));
+  return { ok: true, ms: Date.now() - t0, dates: dates.map((d) => d - dates[0]).join(','), dateDigits: String(dates[0]).length };
 }
