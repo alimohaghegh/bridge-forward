@@ -170,7 +170,7 @@ export async function runAlbumCleanup() {
 
 // Labelled albums that differ in one thing each, sent through the normal
 // send code into the owner's Bale chat, to compare by eye. They stay there.
-export async function runAlbumVariants() {
+export async function runAlbumVariants({ only }) {
   const owner = await getUser(OWNER_TELEGRAM_ID);
   const st = await getSetting('album_test', null);
   if (!owner || !st) return { ok: false, error: 'not prepared' };
@@ -181,15 +181,12 @@ export async function runAlbumVariants() {
     ['آزمایش ۴: ۶ عکس، کپشن فقط روی اولی', 6, (i) => (i === 1 ? 'کپشن' : undefined)],
     ['آزمایش ۵: ۴ عکس بدون کپشن', 4, () => undefined],
   ];
-  const out = [];
-  for (const [label, count, caption] of variants) {
-    await baleCall('sendMessage', { chat_id: owner.baleChatId, text: label });
-    const items = [];
-    for (let i = 1; i <= count; i++) {
-      items.push(albumItemOf({ message_id: i, photo: [st.photos[i - 1]], caption: caption(i) }));
-    }
-    const r = await runPlan(owner.baleChatId, planAlbum(items));
-    out.push(r.ok ? 'ok' : r.reason);
+  const [label, count, caption] = variants[only - 1];
+  await baleCall('sendMessage', { chat_id: owner.baleChatId, text: label });
+  const items = [];
+  for (let i = 1; i <= count; i++) {
+    items.push(albumItemOf({ message_id: i, photo: [st.photos[i - 1]], caption: caption(i) }));
   }
-  return { ok: true, sent: out.join(',') };
+  const r = await runPlan(owner.baleChatId, planAlbum(items));
+  return { ok: r.ok, reason: r.reason };
 }

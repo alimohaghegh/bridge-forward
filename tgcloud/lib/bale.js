@@ -15,6 +15,7 @@ import { RELAY_URL, relayEnabled, relayHeaders } from './relay.js';
 const DIRECT = 'https://tapi.bale.ai';
 const MAX_RETRY_WAIT_SECONDS = 10;
 const NETWORK_RETRY_MS = 15500;
+const MAX_NETWORK_ATTEMPTS = 6;
 
 async function rawCall(method, params, files, viaRelay) {
   const path = '/bot' + BALE_BOT_TOKEN + '/' + method;
@@ -98,7 +99,9 @@ export async function baleCall(method, params, files) {
   const callId = Math.random().toString(36).slice(2, 8);
   let attempt = 0;
   let r = await logged(callId, 0, method, params, files, relay);
-  while (!r.ok && r.network && Date.now() - started < NETWORK_RETRY_MS) {
+  // The attempt limit matters when a call fails at once (seen: hundreds of
+  // attempts in seconds, until the run was killed).
+  while (!r.ok && r.network && attempt + 1 < MAX_NETWORK_ATTEMPTS && Date.now() - started < NETWORK_RETRY_MS) {
     attempt++;
     r = await logged(callId, attempt, method, params, files, relay && attempt % 2 === 0);
   }
