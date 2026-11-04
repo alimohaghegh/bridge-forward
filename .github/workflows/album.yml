@@ -60,7 +60,7 @@ jobs:
           MODE: ${{ inputs.mode }}
         run: |
           if [ "$MODE" = variants ]; then
-            for v in 1 2 3 4 5; do
+            for v in 1 2 3 4; do
               bash scripts/run-and-annotate.sh "Variant $v" "{ __album_variants: true, only: $v }" || true
             done
             exit 0

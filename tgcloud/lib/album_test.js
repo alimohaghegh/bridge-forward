@@ -168,25 +168,28 @@ export async function runAlbumCleanup() {
   return { ok: true, deleted };
 }
 
-// Labelled albums that differ in one thing each, sent through the normal
-// send code into the owner's Bale chat, to compare by eye. They stay there.
+// Labelled albums to compare by eye. After each one the message with the
+// smallest Bale id is forwarded on its own: if it shows the album's first
+// photo in the grid, Bale stored the album in that rotated order; if it shows
+// 1, Bale stored it in order and its app rotates the grid. They stay there.
+// Outputs: id differences and residues only, never ids.
 export async function runAlbumVariants({ only }) {
   const owner = await getUser(OWNER_TELEGRAM_ID);
   const st = await getSetting('album_test', null);
   if (!owner || !st) return { ok: false, error: 'not prepared' };
-  const variants = [
-    ['آزمایش ۱: ۶ عکس بدون کپشن', 6, () => undefined],
-    ['آزمایش ۲: دوباره ۶ عکس بدون کپشن', 6, () => undefined],
-    ['آزمایش ۳: ۶ عکس، کپشن روی همه', 6, (i) => String(i)],
-    ['آزمایش ۴: ۶ عکس، کپشن فقط روی اولی', 6, (i) => (i === 1 ? 'کپشن' : undefined)],
-    ['آزمایش ۵: ۴ عکس بدون کپشن', 4, () => undefined],
-  ];
-  const [label, count, caption] = variants[only - 1];
-  await baleCall('sendMessage', { chat_id: owner.baleChatId, text: label });
+  const chat = owner.baleChatId;
+  await baleCall('sendMessage', { chat_id: chat, text: `آزمایش ${only + 5}` });
   const items = [];
-  for (let i = 1; i <= count; i++) {
-    items.push(albumItemOf({ message_id: i, photo: [st.photos[i - 1]], caption: caption(i) }));
-  }
-  const r = await runPlan(owner.baleChatId, planAlbum(items));
-  return { ok: r.ok, reason: r.reason };
+  for (let i = 1; i <= ITEMS; i++) items.push(albumItemOf({ message_id: i, photo: [st.photos[i - 1]] }));
+  const plan = planAlbum(items);
+  const r = await runPlan(chat, plan);
+  if (!r.ok) return { ok: false, reason: r.reason };
+  const ids = items.map((it) => Number(plan.ids[it.tg][0]));
+  const smallest = Math.min(...ids);
+  await baleCall('sendMessage', { chat_id: chat, text: `آزمایش ${only + 5}: عکس با کوچک‌ترین شماره پیام:` });
+  const f = await baleCall('forwardMessage', { chat_id: chat, from_chat_id: chat, message_id: smallest });
+  return {
+    ok: true, forwarded: f.ok, steps: ids.slice(1).map((id, i) => id - ids[i]).join(','),
+    mod: { m6: ids[0] % 6, m8: ids[0] % 8, m10: ids[0] % 10, m16: ids[0] % 16, m100: ids[0] % 100 },
+  };
 }
