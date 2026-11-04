@@ -169,24 +169,29 @@ export async function runAlbumCleanup() {
   return { ok: true, deleted };
 }
 
-// A labelled album to look at, sent as runOp sends one. Reports how far apart
-// Bale dated its messages: an album seems to be shown rotated when its
-// creation crosses a second. It stays in the owner's chat.
+// A labelled album to look at, sent from files already on Bale: each photo
+// is uploaded alone first (and removed), then the album only names them, so
+// Bale has no upload to do while creating it. It stays in the owner's chat.
 export async function runAlbumVariants({ only }) {
   const owner = await getUser(OWNER_TELEGRAM_ID);
   const st = await getSetting('album_test', null);
   if (!owner || !st) return { ok: false, error: 'not prepared' };
   const chat = owner.baleChatId;
-  await baleCall('sendMessage', { chat_id: chat, text: `آزمایش ${only + 9}` });
   const media = [];
-  const uploads = {};
   for (let i = 0; i < ITEMS; i++) {
-    media.push({ type: 'photo', media: `attach://file${i}` });
-    uploads[`file${i}`] = new InputFile(await api.getFileContent(st.photos[i].file_id), 'photo.jpg', { type: 'image/jpeg' });
+    const bytes = await api.getFileContent(st.photos[i].file_id);
+    const u = await baleCall('sendPhoto', { chat_id: chat }, { photo: new InputFile(bytes, 'photo.jpg', { type: 'image/jpeg' }) });
+    if (!u.ok) return { ok: false, step: 'upload', code: u.error_code };
+    const sizes = u.result.photo;
+    if (!sizes || !sizes.length) {
+      await baleCall('deleteMessage', { chat_id: chat, message_id: u.result.message_id });
+      return { ok: false, noFileId: true, keys: Object.keys(u.result).join('+') };
+    }
+    media.push({ type: 'photo', media: sizes[sizes.length - 1].file_id });
+    await baleCall('deleteMessage', { chat_id: chat, message_id: u.result.message_id });
   }
+  await baleCall('sendMessage', { chat_id: chat, text: `آزمایش ${only + 15}` });
   const t0 = Date.now();
-  const r = await baleCall('sendMediaGroup', { chat_id: chat, media }, uploads);
-  if (!r.ok) return { ok: false, code: r.error_code };
-  const dates = r.result.map((m) => Number(m.date));
-  return { ok: true, ms: Date.now() - t0, dates: dates.map((d) => d - dates[0]).join(','), dateDigits: String(dates[0]).length };
+  const r = await baleCall('sendMediaGroup', { chat_id: chat, media });
+  return { ok: r.ok, code: r.error_code, desc: r.ok ? undefined : String(r.description).slice(0, 80), ms: Date.now() - t0 };
 }

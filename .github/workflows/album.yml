@@ -61,7 +61,7 @@ jobs:
         run: |
           if [ "$MODE" = variants ]; then
             for v in 1 2 3 4 5 6; do
-              bash scripts/run-and-annotate.sh "Prepare $v" '{ __album_prepare: true }' || true
+              npx tgcloud run handlers/message '{ __album_prepare: true }' > /dev/null 2>&1 || true
               bash scripts/run-and-annotate.sh "Variant $v" "{ __album_variants: true, only: $v }" || true
             done
             bash scripts/run-and-annotate.sh 'Cleanup' '{ __album_cleanup: true }'
