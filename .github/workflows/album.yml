@@ -2,9 +2,9 @@ name: Album test
 
 # Three albums of six numbered photos for a fake channel (-43), each item in
 # its own parallel run and in shuffled order, mirrored into the bot owner's
-# own Bale chat. Reports whether each arrived as one album in order, read back
-# from Bale (counts and numbers only), then deletes the test messages.
-# Deploys nothing.
+# own Bale chat. Reports whether each arrived as one album
+# (counts and numbers only), then deletes the test messages except the last
+# album, left for the owner to look at. Deploys nothing.
 on:
   workflow_dispatch:
 

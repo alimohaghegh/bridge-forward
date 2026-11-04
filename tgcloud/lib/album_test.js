@@ -1,8 +1,9 @@
 // Live album test (CI `album.yml`): numbered photos sent as albums of a fake
 // channel, each item in its own run and in shuffled order, like Telegram's
 // updates. Mirrored into the owner's own Bale chat; the report shows that
-// each album arrived whole, and what Bale's answer to an album lists at each
-// place (Bale's forwards carry no photo, so nothing else can be read back).
+// each album arrived whole. Bale's answers carry no photo, so the order can
+// only be seen: each photo shows its number, and the last album stays in the
+// owner's Bale chat to look at.
 // Outputs hold counts and numbers only.
 
 import { api, db, InputFile } from 'sdk';
@@ -34,16 +35,30 @@ function pngChunk(type, data) {
   return [...be32(data.length), ...body, ...be32(crc32(body))];
 }
 
-// Photo n's size tells it apart when read back from Bale.
-const sideOf = (n) => 80 + n * 10;
+const DIGITS = {
+  1: ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+  2: ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+  3: ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
+  4: ['00010', '00110', '01010', '10010', '11111', '00010', '00010'],
+  5: ['11111', '10000', '11110', '00001', '00001', '10001', '01110'],
+  6: ['00110', '01000', '10000', '11110', '10001', '10001', '01110'],
+};
+const SIDE = 120;
+const SCALE = 14;
 
-// A one-colour PNG, uncompressed (a single stored deflate block).
+// A PNG showing the number n, uncompressed (a single stored deflate block).
 export function testPng(n) {
-  const side = sideOf(n);
-  const row = [0];
-  for (let x = 0; x < side; x++) row.push((n * 40) % 256, 255 - n * 30, 90);
+  const left = (SIDE - 5 * SCALE) / 2;
+  const top = (SIDE - 7 * SCALE) / 2;
   const raw = [];
-  for (let y = 0; y < side; y++) raw.push(...row);
+  for (let y = 0; y < SIDE; y++) {
+    raw.push(0);
+    const line = DIGITS[n][Math.floor((y - top) / SCALE)];
+    for (let x = 0; x < SIDE; x++) {
+      const on = line && line[Math.floor((x - left) / SCALE)] === '1';
+      raw.push(...(on ? [0, 0, 0] : [255, 220, 120]));
+    }
+  }
   let a = 1;
   let b = 0;
   for (const v of raw) {
@@ -54,7 +69,7 @@ export function testPng(n) {
   const zlib = [0x78, 0x01, 0x01, len & 255, len >> 8, ~len & 255, (~len >> 8) & 255, ...raw, ...be32(((b << 16) | a) >>> 0)];
   return new Uint8Array([
     137, 80, 78, 71, 13, 10, 26, 10,
-    ...pngChunk('IHDR', [...be32(side), ...be32(side), 8, 2, 0, 0, 0]),
+    ...pngChunk('IHDR', [...be32(SIDE), ...be32(SIDE), 8, 2, 0, 0, 0]),
     ...pngChunk('IDAT', zlib),
     ...pngChunk('IEND', []),
   ]);
@@ -103,27 +118,6 @@ export async function albumTestPost({ album, item }) {
   };
 }
 
-// Sends the photos as one album, numbered in order, and returns what Bale's
-// own answer lists at each place. Removed at once.
-async function baleKeepsOrder(chat, photos) {
-  const media = [];
-  const uploads = {};
-  for (let i = 0; i < photos.length; i++) {
-    media.push({ type: 'photo', media: `attach://file${i}`, caption: String(i + 1) });
-    uploads[`file${i}`] = new InputFile(await api.getFileContent(photos[i].file_id), 'photo.jpg', { type: 'image/jpeg' });
-  }
-  const r = await baleCall('sendMediaGroup', { chat_id: chat, media }, uploads);
-  if (!r.ok) return { error: r.error_code };
-  const list = Array.isArray(r.result) ? r.result : [];
-  const ids = list.map((m) => m.message_id);
-  const seen = list.map((m) => {
-    const w = m.photo && m.photo.length ? Math.max(...m.photo.map((x) => Number(x.width) || 0)) : 0;
-    return `${m.caption ?? '-'}/${w}`;
-  });
-  for (const id of ids) await baleCall('deleteMessage', { chat_id: chat, message_id: id });
-  return { seen: seen.join(' '), idsAscending: ids.every((id, i) => i === 0 || id > ids[i - 1]), keys: Object.keys(list[0] || {}).join('+') };
-}
-
 export async function runAlbumReport() {
   const owner = await getUser(OWNER_TELEGRAM_ID);
   const st = await getSetting('album_test', null);
@@ -154,15 +148,15 @@ export async function runAlbumReport() {
       mirrored: rows.length, idsAscending: ids.every((id, i) => i === 0 || id > ids[i - 1]),
     });
   }
-  const baleOrder = [];
-  for (let k = 0; k < 3; k++) baleOrder.push(await baleKeepsOrder(chat, st.photos));
-  return { ok: true, baleOrder, sendMediaGroup: calls.sendMediaGroup || 0, sendPhoto: calls.sendPhoto || 0, queueLeft: left.n, albums };
+  return { ok: true, sendMediaGroup: calls.sendMediaGroup || 0, sendPhoto: calls.sendPhoto || 0, queueLeft: left.n, albums };
 }
 
 export async function runAlbumCleanup() {
   const owner = await getUser(OWNER_TELEGRAM_ID);
   let deleted = 0;
-  const rows = rowsOf(await db.all(sql`SELECT bale_ids FROM mirrored WHERE tg_chat_id = ${CHANNEL}`));
+  const st = await getSetting('album_test', null);
+  const rows = rowsOf(await db.all(sql`
+    SELECT bale_ids FROM mirrored WHERE tg_chat_id = ${CHANNEL} AND tg_message_id <= ${messageId(st, ALBUMS, 0)}`));
   for (const r of rows) {
     for (const id of JSON.parse(r.bale_ids)) {
       const d = await baleCall('deleteMessage', { chat_id: owner.baleChatId, message_id: id });
